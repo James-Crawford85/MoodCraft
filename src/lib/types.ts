@@ -12,15 +12,17 @@ export interface BaseCard {
 
 /** Parameters needed to (re)run a generation for a card. */
 export interface GenParams {
-  kind: "t2i" | "edit";
+  kind: "t2i" | "edit" | "variation";
   prompt: string;
   seed: number;
   width: number;
   height: number;
   steps: number;
   cfg: number;
-  /** Board-relative asset of the source image (edit only). */
+  /** Board-relative asset of the source image (edit / variation). */
   source?: string;
+  /** Variation strength (img2img denoise, 0–1). */
+  denoise?: number;
 }
 
 export interface ImageCard extends BaseCard {
@@ -81,8 +83,10 @@ export interface Settings {
   t2iCfg: number;
   t2iSize: number;
   aspect: "1:1" | "4:3" | "3:4" | "16:9" | "9:16";
-  editSteps: number;
-  editCfg: number;
+  fluxEditSteps: number;
+  fluxEditCfg: number;
+  /** img2img denoise for Variations: higher = further from the source. */
+  variationStrength: number;
   count: number;
   snap: boolean;
 }

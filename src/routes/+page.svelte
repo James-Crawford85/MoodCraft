@@ -6,7 +6,7 @@
   import Canvas from "$lib/Canvas.svelte";
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
-  import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending } from "$lib/gen.svelte";
+  import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
 
   let canvas: Canvas;
@@ -302,7 +302,7 @@
   {#if toolbarPos && sel.length}
     <div class="ctx" style="left:{toolbarPos.x}px; top:{toolbarPos.y}px;" data-action>
       {#if selImage}
-        <button class="btn" disabled={!comfyState.connected} onclick={() => editImage(selImage, "", board.settings.count)} title="Qwen-Image-Edit variation(s) of this image">✦ Variations</button>
+        <button class="btn" disabled={!comfyState.connected} onclick={() => variations(selImage, board.settings.count)} title="Flux img2img variations: same prompt, new composition (strength in ⚙)">✦ Variations</button>
         <form class="inline" onsubmit={(e) => { e.preventDefault(); if (editPrompt.trim()) { editImage(selImage, editPrompt); editPrompt = ""; } }}>
           <input placeholder="Edit: e.g. make it night time" bind:value={editPrompt} onkeydown={(e) => e.stopPropagation()} />
           <button class="btn" type="submit" disabled={!editPrompt.trim() || !comfyState.connected}>Edit</button>
@@ -331,7 +331,7 @@
   <!-- Bottom prompt bar -->
   <div class="promptbar">
     {#if selImage}
-      <div class="chip" title="Your prompt will edit the selected image with Qwen-Image-Edit">
+      <div class="chip" title="Your prompt will edit the selected image (Flux Klein reference edit)">
         {#if selImage.asset}<span class="thumb-dot"></span>{/if}Editing selected image
         <button class="x" onclick={() => (board.selected = new Set())} aria-label="Clear selection">×</button>
       </div>
@@ -388,10 +388,12 @@
         <label>CFG <input type="number" min="1" max="10" step="0.1" bind:value={board.settings.t2iCfg} onchange={() => board.saveSettings()} /></label>
       </section>
       <section>
-        <h4>Edit / variations <span class="sub">Qwen-Image-Edit 2509</span></h4>
-        <label>Steps <input type="number" min="1" max="60" bind:value={board.settings.editSteps} onchange={() => board.saveSettings()} /></label>
-        <label>CFG <input type="number" min="1" max="10" step="0.1" bind:value={board.settings.editCfg} onchange={() => board.saveSettings()} /></label>
-        <p class="hint">Edits run at ~1 MP (FluxKontextImageScale); expect them to be slower than thumbnails.</p>
+        <h4>Edit <span class="sub">Flux Klein reference edit</span></h4>
+        <label>Steps <input type="number" min="1" max="60" bind:value={board.settings.fluxEditSteps} onchange={() => board.saveSettings()} /></label>
+        <label>CFG <input type="number" min="1" max="10" step="0.1" bind:value={board.settings.fluxEditCfg} onchange={() => board.saveSettings()} /></label>
+        <h4>Variations <span class="sub">Flux img2img, uses the text-to-image steps/CFG</span></h4>
+        <label>Strength <input type="number" min="0.1" max="1" step="0.05" bind:value={board.settings.variationStrength} onchange={() => board.saveSettings()} /></label>
+        <p class="hint">Generate, edit and variations share one Flux Klein model set, so switching between them doesn't reload models. Edits and variations output at the text-to-image size, keeping the source's aspect ratio.</p>
       </section>
       <section>
         <h4>Shortcuts</h4>

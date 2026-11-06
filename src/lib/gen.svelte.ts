@@ -69,20 +69,52 @@ export function generateFromPrompt(prompt: string, count = board.settings.count)
   board.selected = new Set(ids);
 }
 
-const VARIATION_PROMPT =
-  "Create a variation of this image. Keep the same subject, style, color palette and mood, but change the composition, pose, camera angle and small details.";
-
-/** Qwen-Image-Edit on a source image card. `instruction` empty → variation. */
-export function editImage(src: ImageCard, instruction: string, count = 1) {
-  if (!src.asset) return;
-  const prompt = instruction.trim() ? instruction.trim() : VARIATION_PROMPT;
+/** Output size for edits/variations: the source's aspect at the t2i pixel budget. */
+function sizeLike(src: ImageCard) {
   const natW = src.naturalW ?? src.w, natH = src.naturalH ?? src.h;
+  const area = board.settings.t2iSize ** 2;
+  const w = Math.sqrt((area * natW) / natH);
+  const snap = (v: number) => Math.max(256, Math.round(v / 16) * 16);
+  return { width: snap(w), height: snap((w * natH) / natW) };
+}
+
+/** The text that describes a card's content: its own t2i/variation prompt, or
+ *  the nearest ancestor's (edit instructions describe a change, not the image). */
+function describingPrompt(card: ImageCard | undefined, depth = 0): string | undefined {
+  if (!card || depth > 20) return undefined;
+  if (card.gen && card.gen.kind !== "edit") return card.gen.prompt;
+  const parent = card.parentId ? board.byId(card.parentId) : undefined;
+  return describingPrompt(parent?.type === "image" ? parent : undefined, depth + 1);
+}
+
+/** Flux Klein reference edit of a source image card. */
+export function editImage(src: ImageCard, instruction: string, count = 1) {
+  if (!src.asset || !instruction.trim()) return;
   board.checkpoint();
   const ids: string[] = [];
   for (let i = 0; i < count; i++) {
     const gen: GenParams = {
-      kind: "edit", prompt, seed: randomSeed(), width: natW, height: natH,
-      steps: board.settings.editSteps, cfg: board.settings.editCfg, source: src.asset,
+      kind: "edit", prompt: instruction.trim(), seed: randomSeed(), ...sizeLike(src),
+      steps: board.settings.fluxEditSteps, cfg: board.settings.fluxEditCfg, source: src.asset,
+    };
+    const card = board.addPending(gen, { x: src.x + src.w + 32, y: src.y }, src.id, src.w);
+    ids.push(card.id);
+    start(card);
+  }
+  board.selected = new Set(ids);
+}
+
+/** Flux img2img variations: same prompt, source as the starting latent. */
+export function variations(src: ImageCard, count = 1) {
+  if (!src.asset) return;
+  const prompt = describingPrompt(src) ?? "high quality image, same subject, style and color palette";
+  board.checkpoint();
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const gen: GenParams = {
+      kind: "variation", prompt, seed: randomSeed(), ...sizeLike(src),
+      steps: board.settings.t2iSteps, cfg: board.settings.t2iCfg, source: src.asset,
+      denoise: board.settings.variationStrength,
     };
     const card = board.addPending(gen, { x: src.x + src.w + 32, y: src.y }, src.id, src.w);
     ids.push(card.id);

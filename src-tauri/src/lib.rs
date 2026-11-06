@@ -185,7 +185,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { comfy: comfy.clone() })
         .setup(move |app| {
-            tauri::async_runtime::spawn(comfy::ws_loop(sink(app.handle()), comfy.clone()));
+            let ov = override_dir(app.handle());
+            tauri::async_runtime::spawn(comfy::ws_loop(sink(app.handle()), comfy.clone(), ov));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

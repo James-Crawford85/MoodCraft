@@ -10,8 +10,9 @@ const DEFAULT_SETTINGS: Settings = {
   t2iCfg: 3.5,
   t2iSize: 768,
   aspect: "1:1",
-  editSteps: 20,
-  editCfg: 4,
+  fluxEditSteps: 20,
+  fluxEditCfg: 1,
+  variationStrength: 0.7,
   count: 1,
   snap: false,
 };

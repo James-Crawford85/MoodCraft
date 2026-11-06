@@ -22,8 +22,8 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | Action | How |
 | --- | --- |
 | Generate | Type in the bottom prompt bar, press **Enter**. Pick the aspect ratio and ×1–×4. |
-| Edit an image | Select an image card, then type the change in the prompt bar, or use **Edit** in the floating toolbar |
-| Variations | Select an image card → **✦ Variations** |
+| Edit an image | Select an image card, then type the change in the prompt bar, or use **Edit** in the floating toolbar (Flux Klein reference edit) |
+| Variations | Select an image card → **✦ Variations** (Flux img2img with the card's prompt) |
 | Re-roll | Select a generated image → **↻** (same prompt, new seed) |
 | Add images | Drag files from Explorer onto the canvas, or paste with **Ctrl+V** |
 | Note | **N**, or double-click empty canvas. Double-click a note to edit it. |
@@ -64,16 +64,29 @@ The Rust side does all ComfyUI traffic: `POST /prompt` and `/upload/image`,
 progress over `/ws` with a `/history` polling fallback, and results through
 `/view`. It sends API-format templates with `{{placeholder}}` values:
 
+All three share one Flux Klein model set. Loader nodes `1`–`3` (and the
+negative prompt node `5`) are identical in every template, so ComfyUI's cache
+keeps the models loaded when you switch between generating, editing and
+variations. Measured warm: about 6 s each at 768².
+
 - `src-tauri/workflows/t2i_flux3_klein.json`: Flux3 Image Klein base (int8) +
   Qwen3-VL 4B text encoder (`flux3`) + `flux2-vae`, `EmptyFlux2LatentImage`,
   euler/simple. Defaults: 768², 20 steps, CFG 3.5.
-- `src-tauri/workflows/edit_qwen_2509.json`: Qwen-Image-Edit 2509 (int8) +
-  `qwen_2.5_vl_7b_fp8_scaled` (`qwen_image`) + `qwen_image_vae`,
-  `TextEncodeQwenImageEditPlus`, `FluxKontextImageScale`, AuraFlow shift 3,
-  CFGNorm. 20 steps, CFG 4. This mirrors the official 2509 template without the Lightning LoRA.
+- `src-tauri/workflows/edit_flux3_klein.json` (**Edit**): `ReferenceMultiLatent`
+  resizes the source to the target megapixels and feeds it as reference
+  conditioning and latent size (the core path of the official
+  `image_flux3_klein_image_edit` template, without its prompt upsampler).
+  20 steps, CFG 1.
+- `src-tauri/workflows/variation_flux3_klein.json` (**Variations**): img2img.
+  The source is scaled, VAE-encoded and resampled at denoise 0.7 ("Strength"
+  in ⚙) with the card's original prompt. A reference edit asked for "a
+  variation" barely changed the image; img2img gives real new compositions.
 
-To change a graph without rebuilding, put `t2i.json` / `edit.json` (same
-placeholders) in `%APPDATA%\com.sunsh.boardcreate\workflows\`. The ⚙ panel's
+On launch, when ComfyUI is idle, the app queues a 1-step 256² image (saved as
+a temp preview only) so the models are loaded before your first real image.
+
+To change a graph without rebuilding, put `t2i.json` / `edit.json` / `variation.json`
+(same placeholders) in `%APPDATA%\com.sunsh.boardcreate\workflows\`. The ⚙ panel's
 **Re-check** compares the templates' nodes and model files with ComfyUI's
 `/object_info`.
 
