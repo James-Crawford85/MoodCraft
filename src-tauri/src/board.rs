@@ -27,6 +27,20 @@ pub fn write_asset(board_dir: &Path, bytes: &[u8], ext: &str) -> Result<(String,
     Ok((format!("{ASSETS_DIR}/{name}"), size.width as u32, size.height as u32))
 }
 
+/// File extension for image bytes we can show and send to ComfyUI, from the
+/// bytes themselves (not the URL or the server's content type).
+pub fn sniff_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    use imagesize::ImageType;
+    match imagesize::image_type(bytes).ok()? {
+        ImageType::Png => Some("png"),
+        ImageType::Jpeg => Some("jpg"),
+        ImageType::Webp => Some("webp"),
+        ImageType::Gif => Some("gif"),
+        ImageType::Bmp => Some("bmp"),
+        _ => None,
+    }
+}
+
 /// Copy an external image file (drag & drop) into the board's assets.
 pub fn import_file(board_dir: &Path, src: &Path) -> Result<(String, u32, u32), String> {
     let ext = src
@@ -147,6 +161,12 @@ mod tests {
         assert!(copy.join(&rel).join(&grand).join(BOARD_FILE).exists());
         assert!(copy_assets(&parent, &parent.join("inside")).is_err());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn sniffs_image_types() {
+        assert_eq!(sniff_image_ext(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0"), Some("png"));
+        assert_eq!(sniff_image_ext(b"<!doctype html><html>"), None);
     }
 
     #[test]

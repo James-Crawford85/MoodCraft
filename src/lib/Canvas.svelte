@@ -6,7 +6,12 @@
   import { api } from "./api";
   import type { BoardLinkCard } from "./types";
 
-  let { onOpenBoard, onError }: { onOpenBoard: (card: BoardLinkCard) => void; onError: (message: string) => void } = $props();
+  let { onOpenBoard, onError, onCamera }: {
+    onOpenBoard: (card: BoardLinkCard) => void;
+    onError: (message: string) => void;
+    /** Open the camera; a snapshot lands at this board point. */
+    onCamera: (at: { x: number; y: number }) => void;
+  } = $props();
   import type { Card } from "./types";
 
   let el: HTMLDivElement;
@@ -272,14 +277,15 @@
     const w = board.screenToWorld(p.x, p.y);
     const r = el.getBoundingClientRect();
     // Keep the menu on screen.
-    menu = { sx: Math.min(p.x, r.width - 170), sy: Math.min(p.y, r.height - 125), wx: w.x, wy: w.y };
+    menu = { sx: Math.min(p.x, r.width - 170), sy: Math.min(p.y, r.height - 160), wx: w.x, wy: w.y };
   }
 
-  async function menuAdd(kind: "note" | "frame" | "subboard") {
+  async function menuAdd(kind: "note" | "frame" | "subboard" | "camera") {
     if (!menu) return;
     const { wx, wy } = menu;
     menu = null;
-    if (kind === "note") editingId = board.addNote(wx, wy).id;
+    if (kind === "camera") onCamera({ x: wx, y: wy });
+    else if (kind === "note") editingId = board.addNote(wx, wy).id;
     else if (kind === "frame") board.addFrame({ x: wx, y: wy });
     else {
       const label = "New board";
@@ -352,6 +358,7 @@
       <button role="menuitem" onclick={() => menuAdd("note")}>Add note <kbd>N</kbd></button>
       <button role="menuitem" onclick={() => menuAdd("frame")}>Add frame <kbd>F</kbd></button>
       <button role="menuitem" onclick={() => menuAdd("subboard")}>Add subboard</button>
+      <button role="menuitem" onclick={() => menuAdd("camera")}>Camera…</button>
     </div>
   {/if}
   {#if board.cards.length === 0}

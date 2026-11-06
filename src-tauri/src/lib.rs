@@ -157,6 +157,42 @@ async fn board_save(dir: String, json: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Download an image from a web address (pasted or dropped) into the board.
+/// Only http(s); at most 40 MB; the bytes must be a png/jpg/webp/gif/bmp.
+#[tauri::command]
+async fn import_url(board_dir: String, url: String) -> Result<ImportedAsset, String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| format!("Not a web address: {url}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Only http and https links can be imported.".into());
+    }
+    const MAX: usize = 40 * 1024 * 1024;
+    let client = reqwest::Client::builder()
+        .user_agent("BoardCreate/0.1 (image import)")
+        .timeout(std::time::Duration::from_secs(45))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut resp = client.get(parsed.clone()).send().await.map_err(|e| format!("Download failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: {} from {}", resp.status(), parsed.host_str().unwrap_or("?")));
+    }
+    if resp.content_length().is_some_and(|n| n as usize > MAX) {
+        return Err("That image is larger than 40 MB.".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("Download failed: {e}"))? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > MAX {
+            return Err("That image is larger than 40 MB.".into());
+        }
+    }
+    let ext = board::sniff_image_ext(&bytes).ok_or("That link isn't an image (png, jpg, webp, gif or bmp).")?;
+    let dir = PathBuf::from(board_dir);
+    tauri::async_runtime::spawn_blocking(move || board::write_asset(&dir, &bytes, ext))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|(asset, width, height)| ImportedAsset { asset, width, height })
+}
+
 /// Create an empty subboard inside `parent`; returns its board-relative folder.
 #[tauri::command]
 fn subboard_create(parent: String, title: String) -> Result<String, String> {
@@ -254,6 +290,7 @@ pub fn run() {
             subboard_create,
             import_image,
             import_image_bytes,
+            import_url,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

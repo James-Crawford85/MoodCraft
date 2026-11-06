@@ -10,6 +10,7 @@
   import { FRAME_COLORS, NOTE_COLORS, type BoardLinkCard, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
   import Inpaint from "$lib/Inpaint.svelte";
+  import CameraCapture from "$lib/CameraCapture.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
 
   let canvas: Canvas;
@@ -18,6 +19,8 @@
   let showMore = $state(false);
   /** Image card open in the paint-a-mask editor. */
   let painting = $state<ImageCard | null>(null);
+  /** Where a camera snapshot goes, while the camera dialog is open. */
+  let cameraAt = $state<{ x: number; y: number } | null>(null);
   // Close the "More like this" options when the selection changes.
   $effect(() => { void board.selected; showMore = false; });
   let showSettings = $state(false);
@@ -175,6 +178,11 @@
 
   // --- import ------------------------------------------------------------------
   async function importPaths(paths: string[], at?: { x: number; y: number }) {
+    // Some sources (e.g. an image dragged from a web page) may hand over a web address.
+    const links = paths.filter((p) => /^https?:\/\//i.test(p));
+    for (const l of links) await importLink(l, at);
+    paths = paths.filter((p) => !links.includes(p));
+    if (!paths.length && links.length) return;
     const imgs = paths.filter((p) => /\.(png|jpe?g|webp|gif|bmp)$/i.test(p));
     if (!imgs.length) return toast("Only image files can be dropped (png, jpg, webp, gif, bmp)", "error");
     board.checkpoint();
@@ -191,13 +199,58 @@
     board.touch();
   }
 
+  async function importLink(url: string, at?: { x: number; y: number }) {
+    const id = Math.random();
+    toasts.push({ id, text: "Downloading image…", kind: "info" });
+    try {
+      const r = await api.importUrl(board.dir, url);
+      board.checkpoint();
+      board.selected = new Set([board.addImage(r.asset, r.width, r.height, at).id]);
+      board.touch();
+    } catch (err) {
+      // Not an image (or unreachable): keep the link as a note so nothing is lost.
+      toast(`${err} Added the link as a note instead.`, "error");
+      board.addNote(undefined, undefined, url);
+    } finally {
+      toasts = toasts.filter((t) => t.id !== id);
+    }
+  }
+
+  async function importDataUrl(dataUrl: string) {
+    const [head, b64] = dataUrl.split(",", 2);
+    const ext = (head.match(/image\/(\w+)/)?.[1] ?? "png").toLowerCase().replace("jpeg", "jpg");
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const r = await api.importImageBytes(board.dir, bytes, ext);
+      board.checkpoint();
+      board.selected = new Set([board.addImage(r.asset, r.width, r.height).id]);
+      board.touch();
+    } catch (err) {
+      toast(String(err), "error");
+    }
+  }
+
+  async function addCameraShot(png: Uint8Array) {
+    const r = await api.importImageBytes(board.dir, png, "png");
+    board.checkpoint();
+    const c = board.addImage(r.asset, r.width, r.height, cameraAt ?? undefined);
+    board.selected = new Set([c.id]);
+    board.touch();
+  }
+
   async function onPaste(e: ClipboardEvent) {
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
     const items = [...(e.clipboardData?.items ?? [])].filter((i) => i.type.startsWith("image/"));
     if (!items.length) {
-      const text = e.clipboardData?.getData("text/plain");
-      if (text) board.addNote(undefined, undefined, text);
+      const text = e.clipboardData?.getData("text/plain")?.trim();
+      if (!text) return;
+      // A pasted link to an image (or a data: image) becomes an image card.
+      if (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(text)) { e.preventDefault(); return importDataUrl(text); }
+      if (/^https?:\/\/\S+$/i.test(text)) { e.preventDefault(); return importLink(text); }
+      board.addNote(undefined, undefined, text);
       return;
     }
     e.preventDefault();
@@ -327,7 +380,7 @@
 <svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 <div class="app">
-  <Canvas bind:this={canvas} onOpenBoard={openSubboard} onError={(m) => toast(m, "error")} />
+  <Canvas bind:this={canvas} onOpenBoard={openSubboard} onError={(m) => toast(m, "error")} onCamera={(at) => (cameraAt = at)} />
 
   {#if dropping}<div class="dropzone">Drop images to add them to the board</div>{/if}
 
@@ -423,6 +476,10 @@
     </div>
   {/if}
 
+  {#if cameraAt}
+    <CameraCapture onCapture={addCameraShot} onClose={() => (cameraAt = null)} />
+  {/if}
+
   {#if painting}
     <Inpaint card={painting} onClose={() => (painting = null)} />
   {/if}
@@ -510,7 +567,7 @@
         <h4>Shortcuts</h4>
         <p class="hint keys">
           Space/middle/right-drag: pan · Wheel: zoom · Drag empty: select · Shift-click: add to selection<br />
-          N note · F frame · G snap · Del delete · Ctrl+D duplicate · Ctrl+Z/Y undo/redo · Ctrl+0 fit · Ctrl+S save · Ctrl+V paste image/text · double-click empty: note
+          N note · F frame · G snap · Del delete · Ctrl+D duplicate · Ctrl+Z/Y undo/redo · Ctrl+0 fit · Ctrl+S save · Ctrl+V paste an image, an image link or text · right-click empty: note, frame, subboard, camera · double-click image: view large
         </p>
       </section>
     </aside>
