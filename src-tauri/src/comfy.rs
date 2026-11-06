@@ -199,15 +199,25 @@ fn decode_preview(b: &[u8]) -> Option<WsEvent> {
 // Workflow templating
 // ---------------------------------------------------------------------------
 
-/// Replace every string value that is exactly `{{key}}` with `vars[key]`
-/// (keeping the JSON type of the replacement, so numbers stay numbers).
+/// Replace `{{key}}` placeholders with `vars[key]`. A string that is exactly
+/// one placeholder takes the replacement's JSON type (numbers stay numbers);
+/// placeholders embedded in longer strings are replaced as text.
 fn substitute(v: &mut Value, vars: &HashMap<&str, Value>) {
     match v {
         Value::String(s) => {
             if let Some(key) = s.strip_prefix("{{").and_then(|r| r.strip_suffix("}}")) {
                 if let Some(rep) = vars.get(key) {
                     *v = rep.clone();
+                    return;
                 }
+            }
+            if s.contains("{{") {
+                let mut out = s.clone();
+                for (k, rep) in vars {
+                    let text = match rep { Value::String(t) => t.clone(), other => other.to_string() };
+                    out = out.replace(&format!("{{{{{k}}}}}"), &text);
+                }
+                *s = out;
             }
         }
         Value::Array(a) => a.iter_mut().for_each(|x| substitute(x, vars)),
@@ -404,6 +414,9 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, override_dir: Op
     vars.insert("height", json!(req.height.clamp(64, 2048) / 16 * 16));
     vars.insert("steps", json!(req.steps.clamp(1, 150)));
     vars.insert("cfg", json!(req.cfg));
+    // Inputs/outputs are shared with the user's other ComfyUI work, so keep
+    // ours under board/<board name>/.
+    vars.insert("prefix", json!(format!("board/{}", board_slug(board_dir))));
 
     let mut workflow = match req.kind.as_str() {
         "t2i" => load_template(override_dir, "t2i.json", T2I_TEMPLATE).map_err(e)?,
@@ -420,6 +433,26 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, override_dir: Op
     queue_prompt(comfy, &workflow).await
 }
 
+/// Board folder name reduced to a safe ComfyUI subfolder name.
+fn board_slug(board_dir: &Path) -> String {
+    let name = board_dir.file_name().and_then(|n| n.to_str()).unwrap_or("board");
+    let slug: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    if slug.trim_matches('_').is_empty() { "board".into() } else { slug }
+}
+
+/// Ask ComfyUI to unload models and release VRAM (best effort).
+pub async fn free_memory(comfy: &Comfy, timeout: Duration) -> Result<(), String> {
+    let resp = comfy
+        .http
+        .post(comfy.url("/free").await)
+        .json(&json!({ "unload_models": true, "free_memory": true }))
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| unreachable_msg(&e))?;
+    if resp.status().is_success() { Ok(()) } else { Err(format!("/free failed: {}", resp.status())) }
+}
+
 async fn upload_image(comfy: &Comfy, path: &Path) -> Result<String, String> {
     let bytes = tokio::fs::read(path).await.map_err(|e| format!("Read {}: {e}", path.display()))?;
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("source.png").to_string();
@@ -430,7 +463,7 @@ async fn upload_image(comfy: &Comfy, path: &Path) -> Result<String, String> {
     let form = reqwest::multipart::Form::new()
         .part("image", part)
         .text("type", "input")
-        .text("subfolder", "boardcreate")
+        .text("subfolder", "board")
         .text("overwrite", "true");
     let resp = comfy
         .http
@@ -697,12 +730,24 @@ mod tests {
         assert_eq!(v["4"]["inputs"]["text"], "a fox");
         assert_eq!(v["7"]["inputs"]["seed"], 42);
         assert_eq!(v["6"]["inputs"]["width"], 512);
+
+        let mut v: Value = serde_json::from_str(EDIT_TEMPLATE).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("prefix", json!("board/my_board"));
+        substitute(&mut v, &vars);
+        assert_eq!(v["13"]["inputs"]["filename_prefix"], "board/my_board/edit");
     }
 
     #[test]
     fn base64_matches_reference() {
         assert_eq!(b64(b"hello"), "aGVsbG8=");
         assert_eq!(b64(b"hi!"), "aGkh");
+    }
+
+    #[test]
+    fn board_slugs() {
+        assert_eq!(board_slug(Path::new("E:/Boards/My Board!")), "My_Board_");
+        assert_eq!(board_slug(Path::new("C:/x/untitled-17")), "untitled-17");
     }
 
     #[test]

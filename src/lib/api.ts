@@ -21,6 +21,7 @@ export const api = {
   comfySetUrl: (url: string) => invoke<void>("comfy_set_url", { url }),
   generate: (cardId: string, boardDir: string, p: GenParams, resumePromptId?: string) =>
     invoke<void>("generate", { req: { cardId, boardDir, ...p, negative: "", resumePromptId } }),
+  free: () => invoke<void>("comfy_free"),
   cancel: (cardId: string) => invoke<void>("cancel_generation", { cardId }),
   boardNew: () => invoke<string>("board_new"),
   boardOpen: (dir: string) => invoke<string>("board_open", { dir }),

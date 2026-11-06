@@ -76,6 +76,12 @@ async fn generate(app: AppHandle, req: GenRequest, state: State<'_, AppState>) -
     Ok(())
 }
 
+/// Unload ComfyUI's models so the GPU is free for Blender etc.
+#[tauri::command]
+async fn comfy_free(state: State<'_, AppState>) -> Result<(), String> {
+    comfy::free_memory(&state.comfy, std::time::Duration::from_secs(5)).await
+}
+
 #[tauri::command]
 async fn cancel_generation(card_id: String, state: State<'_, AppState>) -> Result<(), String> {
     comfy::cancel(&state.comfy, &card_id).await
@@ -173,6 +179,7 @@ fn percent_decode(s: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let comfy = Arc::new(Comfy::new());
+    let comfy_exit = comfy.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -187,6 +194,7 @@ pub fn run() {
             comfy_set_url,
             generate,
             cancel_generation,
+            comfy_free,
             board_new,
             board_open,
             board_save,
@@ -194,8 +202,16 @@ pub fn run() {
             import_image,
             import_image_bytes,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |_app, event| {
+            // Release ComfyUI's VRAM when the board closes (only then: models
+            // stay loaded between generations so they remain fast).
+            if let tauri::RunEvent::Exit = event {
+                let c = comfy_exit.clone();
+                let _ = tauri::async_runtime::block_on(comfy::free_memory(&c, std::time::Duration::from_secs(2)));
+            }
+        });
 }
 
 #[cfg(test)]

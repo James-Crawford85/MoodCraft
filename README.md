@@ -32,6 +32,12 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | Select | Click, Shift/Ctrl-click, drag a marquee on empty canvas, Ctrl+A |
 | Other | Del delete · Ctrl+D duplicate · Ctrl+Z / Ctrl+Y undo/redo · Ctrl+0 fit · 1 = 100% · G snap to grid |
 
+**Free GPU** (top bar) asks ComfyUI to unload its models so Blender or other
+tools get the VRAM back. The app does the same automatically when it closes;
+between generations, models stay loaded so generation stays fast. Generated
+files land in ComfyUI's output under `board/<board folder name>/`, and sources
+for edits are uploaded to `input/board/`, kept apart from your other ComfyUI work.
+
 Cards keep generating in the background. A pending card shows the queue and
 sampling progress and has a **Cancel** button. ComfyUI errors (including GPU
 out-of-memory) show on the card with a **Retry** button.

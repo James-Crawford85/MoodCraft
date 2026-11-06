@@ -158,9 +158,21 @@
   }
 
   // --- actions -----------------------------------------------------------------
+  async function freeGpu() {
+    try {
+      await api.free();
+      toast("Asked ComfyUI to unload its models. The next generation will reload them.");
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  }
+
   function submitPrompt() {
     if (!prompt.trim()) return;
-    if (!comfyState.connected) toast("ComfyUI is offline. The job will fail until the Comfy Desktop app is running.", "error");
+    if (!comfyState.connected) {
+      toast("ComfyUI is not running. Start it from the Comfy Desktop app, then try again.", "error");
+      return;
+    }
     if (selImage) editImage(selImage, prompt, board.settings.count);
     else generateFromPrompt(prompt);
     prompt = "";
@@ -276,17 +288,24 @@
       {comfyState.connected ? "ComfyUI" : "ComfyUI offline"}
       {#if pendingCount}<span class="badge">{pendingCount}</span>{/if}
     </button>
+    <button class="btn ghost" onclick={freeGpu} disabled={!comfyState.connected || pendingCount > 0} title="Unload ComfyUI's models to free VRAM for Blender etc. (also done automatically when the app closes)">Free GPU</button>
     <button class="btn ghost icon" onclick={() => (showSettings = !showSettings)} title="Settings">⚙</button>
   </header>
+
+  {#if !comfyState.connected}
+    <div class="offline" data-action>
+      <strong>ComfyUI not running</strong> at {comfyState.url || board.settings.comfyUrl}. Start it from the Comfy Desktop app; the board reconnects automatically. You can still arrange, add notes and drop images.
+    </div>
+  {/if}
 
   <!-- Contextual toolbar for the selection -->
   {#if toolbarPos && sel.length}
     <div class="ctx" style="left:{toolbarPos.x}px; top:{toolbarPos.y}px;" data-action>
       {#if selImage}
-        <button class="btn" onclick={() => editImage(selImage, "", board.settings.count)} title="Qwen-Image-Edit variation(s) of this image">✦ Variations</button>
+        <button class="btn" disabled={!comfyState.connected} onclick={() => editImage(selImage, "", board.settings.count)} title="Qwen-Image-Edit variation(s) of this image">✦ Variations</button>
         <form class="inline" onsubmit={(e) => { e.preventDefault(); if (editPrompt.trim()) { editImage(selImage, editPrompt); editPrompt = ""; } }}>
           <input placeholder="Edit: e.g. make it night time" bind:value={editPrompt} onkeydown={(e) => e.stopPropagation()} />
-          <button class="btn" type="submit" disabled={!editPrompt.trim()}>Edit</button>
+          <button class="btn" type="submit" disabled={!editPrompt.trim() || !comfyState.connected}>Edit</button>
         </form>
         {#if selImage.gen}<button class="btn ghost" onclick={() => reroll(selImage)} title="Same prompt, new seed">↻</button>{/if}
         {#if selImage.prompt}<button class="btn ghost" onclick={() => { prompt = selImage.prompt ?? ""; document.getElementById("prompt")?.focus(); }} title={selImage.prompt}>Prompt</button>{/if}
@@ -737,6 +756,20 @@
     color: var(--accent);
     pointer-events: none;
     z-index: 20;
+  }
+  .offline {
+    position: absolute;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 720px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #ffd7dc;
+    background: #2a1a1d;
+    border: 1px solid #6b2a33;
+    border-radius: 10px;
+    z-index: 9;
   }
   .toasts {
     position: absolute;

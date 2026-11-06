@@ -18,5 +18,5 @@
                       "seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}",
                       "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0 } },
   "12": { "class_type": "VAEDecode", "inputs": { "samples": ["11", 0], "vae": ["3", 0] } },
-  "13": { "class_type": "SaveImage", "inputs": { "images": ["12", 0], "filename_prefix": "BoardCreate/edit" } }
+  "13": { "class_type": "SaveImage", "inputs": { "images": ["12", 0], "filename_prefix": "{{prefix}}/edit" } }
 }
