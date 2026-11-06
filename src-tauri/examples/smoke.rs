@@ -16,15 +16,15 @@ async fn main() {
     let edit_prompt = args.get(3).cloned().unwrap_or_else(|| "Make it night time, lit by warm glowing lanterns".into());
     std::fs::create_dir_all(&dir).unwrap();
 
-    let c = Arc::new(Comfy::new());
+    let c = Arc::new(Comfy::new(boardcreate_lib::models::ModelConfig::default(), None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
     let sink = Sink(Arc::new(move |e, p| {
         let _ = tx.send((e.to_string(), p));
     }));
-    tokio::spawn(comfy::ws_loop(sink.clone(), c.clone(), None));
+    tokio::spawn(comfy::ws_loop(sink.clone(), c.clone()));
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-    let report = comfy::check(&c, None).await;
+    let report = comfy::check(&c).await;
     println!("check: connected={} device={:?} problems={:?}", report.connected, report.device, report.problems);
     if !report.connected {
         std::process::exit(1);
@@ -56,7 +56,7 @@ async fn main() {
         };
         let t = Instant::now();
         let mut first_sample: Option<f32> = None;
-        tokio::spawn(comfy::run_job(sink.clone(), c.clone(), req, None));
+        tokio::spawn(comfy::run_job(sink.clone(), c.clone(), req));
         loop {
             let (e, p) = rx.recv().await.unwrap();
             if p["cardId"] != card_id.as_str() {

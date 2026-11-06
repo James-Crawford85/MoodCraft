@@ -64,31 +64,51 @@ The Rust side does all ComfyUI traffic: `POST /prompt` and `/upload/image`,
 progress over `/ws` with a `/history` polling fallback, and results through
 `/view`. It sends API-format templates with `{{placeholder}}` values:
 
-All three share one Flux Klein model set. Loader nodes `1`–`3` (and the
-negative prompt node `5`) are identical in every template, so ComfyUI's cache
-keeps the models loaded when you switch between generating, editing and
-variations. Measured warm: about 6 s each at 768².
+### Choosing models (⚙ → Models)
 
-- `src-tauri/workflows/t2i_flux3_klein.json`: Flux3 Image Klein base (int8) +
-  Qwen3-VL 4B text encoder (`flux3`) + `flux2-vae`, `EmptyFlux2LatentImage`,
-  euler/simple. Defaults: 768², 20 steps, CFG 3.5.
-- `src-tauri/workflows/edit_flux3_klein.json` (**Edit**): `ReferenceMultiLatent`
-  resizes the source to the target megapixels and feeds it as reference
-  conditioning and latent size (the core path of the official
-  `image_flux3_klein_image_edit` template, without its prompt upsampler).
-  20 steps, CFG 1.
-- `src-tauri/workflows/variation_flux3_klein.json` (**Variations**): img2img.
-  The source is scaled, VAE-encoded and resampled at denoise 0.7 ("Strength"
-  in ⚙) with the card's original prompt. A reference edit asked for "a
-  variation" barely changed the image; img2img gives real new compositions.
+Pick a **model family**, then the files it needs. The dropdowns are filled
+live from ComfyUI (`/models/diffusion_models`, `/models/text_encoders`,
+`/models/vae`, `/models/checkpoints`, and CLIPLoader's `type` options from
+`/object_info`). Changing the family preselects installed files that match it
+by name; you can override any of them. **Test** renders a 4-step 256² image with
+the selection before you save, so a mismatched encoder shows up in settings
+rather than on a card. **Save** writes `%APPDATA%\com.sunsh.boardcreate\models.json`
+(not `board.json`). It frees and loads nothing; the next image loads the new
+models. Switching family also resets size, steps and CFG to that family's defaults.
 
-On launch, when ComfyUI is idle, the app queues a 1-step 256² image (saved as
-a temp preview only) so the models are loaded before your first real image.
+| Family | Loaders | Generate | Edit | Variations | Defaults |
+| --- | --- | --- | --- | --- | --- |
+| Flux Klein | diffusion model + text encoder (`flux3`) + VAE | ✓ | ✓ reference edit | ✓ img2img | 768², 20 steps, CFG 3.5, euler/simple; edit CFG 1; strength 0.7 |
+| Checkpoint (SD / SDXL) | one checkpoint file | ✓ | – (buttons disabled) | ✓ img2img | 1024², 25 steps, CFG 6.5, dpmpp_2m/karras; strength 0.6 |
 
-To change a graph without rebuilding, put `t2i.json` / `edit.json` / `variation.json`
-(same placeholders) in `%APPDATA%\com.sunsh.boardcreate\workflows\`. The ⚙ panel's
-**Re-check** compares the templates' nodes and model files with ComfyUI's
-`/object_info`.
+Templates live in `src-tauri/workflows/<family>/{t2i,edit,variation}.json`.
+Loader inputs are placeholders (`{{unet}}`, `{{clip}}`, `{{clip_type}}`,
+`{{vae}}`, `{{ckpt}}`, plus `{{sampler}}`/`{{scheduler}}` from the family
+preset). Within a family, every template uses the same loader node ids and
+inputs, enforced by a unit test, so ComfyUI's cache keeps the models loaded
+when you switch between generating, editing and variations. Measured warm with
+Flux Klein: about 6 s each at 768².
+
+- **Flux Klein**: `t2i` uses `EmptyFlux2LatentImage`. `edit` is the core path of
+  the official `image_flux3_klein_image_edit` template (`ReferenceMultiLatent`,
+  without its prompt upsampler). `variation` is img2img: the source is scaled,
+  VAE-encoded and resampled with the card's original prompt. A reference edit
+  asked for "a variation" barely changed the image.
+- **Checkpoint**: `CheckpointLoaderSimple` → `EmptyLatentImage` / img2img.
+
+**Adding a family:** add a folder of templates and one entry in `FAMILIES` in
+`src-tauri/src/models.rs`. The entry holds the loader type, default encoder
+type, file-name hints, default steps/CFG/sampler/scheduler, and whether it
+supports edit and variations.
+
+To change a graph without rebuilding, put `<kind>.json` (same placeholders) in
+`%APPDATA%\com.sunsh.boardcreate\workflows\<family>\`. The ⚙ panel's
+**Re-check** compares the active templates' nodes and model files with
+ComfyUI's `/object_info`.
+
+On launch, when ComfyUI is idle, the app queues a 1-step 256² image with the
+selected models (saved as a temp preview only), so they are loaded before your
+first real image.
 
 Headless end-to-end check against a live ComfyUI:
 
@@ -96,14 +116,24 @@ Headless end-to-end check against a live ComfyUI:
 cd src-tauri && cargo run --example smoke
 ```
 
+```bash
+cd src-tauri && cargo run --example models
+```
+
+`smoke` runs t2i → edit → variation → t2i with timings. `models` lists the installed
+models, runs Test for Flux, SDXL and a deliberately mismatched combination, then
+an SDXL generate and variation. The SDXL steps unload Flux.
+
 ## Layout
 
 ```
 src-tauri/src/comfy.rs   ComfyUI client: WS listener, job runner, cancel, health check
 src-tauri/src/board.rs   board folder load/save, asset import
+src-tauri/src/models.rs  model families, model selection (models.json)
 src-tauri/src/lib.rs     Tauri commands
 src/lib/board.svelte.ts  board state, camera, undo/redo, placement
 src/lib/gen.svelte.ts    generation intents → cards/jobs, backend events
+src/lib/ModelSetup.svelte, models.svelte.ts  ⚙ → Models panel and state
 src/lib/Canvas.svelte    pan/zoom/marquee/drag/resize
 src/lib/CardView.svelte  image/note/frame card rendering
 src/routes/+page.svelte  app shell, toolbars, settings, shortcuts, drop/paste

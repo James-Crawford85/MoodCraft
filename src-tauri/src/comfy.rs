@@ -12,10 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{RwLock, broadcast};
 
-/// Workflow templates (ComfyUI API format) with `{{placeholder}}` values.
-const T2I_TEMPLATE: &str = include_str!("../workflows/t2i_flux3_klein.json");
-const EDIT_TEMPLATE: &str = include_str!("../workflows/edit_flux3_klein.json");
-const VARIATION_TEMPLATE: &str = include_str!("../workflows/variation_flux3_klein.json");
+use crate::models::ModelConfig;
 
 /// Event sink. In the app it forwards to Tauri's `emit`; the smoke test prints instead.
 #[derive(Clone)]
@@ -49,10 +46,14 @@ pub struct Comfy {
     pub jobs: RwLock<HashMap<String, String>>,
     /// prompt_id currently executing on the server (from `executing` events).
     pub running_prompt: RwLock<Option<String>>,
+    /// Active model family + files (see models.rs).
+    pub models: RwLock<ModelConfig>,
+    /// `<app_config>/workflows/` for user template overrides.
+    pub override_dir: Option<PathBuf>,
 }
 
 impl Comfy {
-    pub fn new() -> Self {
+    pub fn new(models: ModelConfig, override_dir: Option<PathBuf>) -> Self {
         let (tx, _) = broadcast::channel(512);
         Comfy {
             base_url: RwLock::new(DEFAULT_URL.to_string()),
@@ -65,6 +66,8 @@ impl Comfy {
             connected: RwLock::new(false),
             jobs: RwLock::new(HashMap::new()),
             running_prompt: RwLock::new(None),
+            models: RwLock::new(models),
+            override_dir,
         }
     }
 
@@ -111,7 +114,7 @@ struct StatusPayload {
 
 /// Runs forever: connects to `/ws`, decodes messages, fans them out on the
 /// broadcast channel, and reconnects with a short backoff.
-pub async fn ws_loop(app: Sink, comfy: Arc<Comfy>, override_dir: Option<PathBuf>) {
+pub async fn ws_loop(app: Sink, comfy: Arc<Comfy>) {
     let mut warmed = false;
     loop {
         let http = comfy.base_url.read().await.clone();
@@ -125,17 +128,27 @@ pub async fn ws_loop(app: Sink, comfy: Arc<Comfy>, override_dir: Option<PathBuf>
                 *comfy.connected.write().await = true;
                 if !warmed {
                     warmed = true;
-                    let (c, ov) = (comfy.clone(), override_dir.clone());
+                    let c = comfy.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = warmup(&c, ov.as_deref()).await {
+                        if let Err(e) = warmup(&c).await {
                             eprintln!("warmup skipped: {e}");
                         }
                     });
                 }
                 let _ = app.emit("comfy://status", StatusPayload { connected: true, url: http.clone(), queue_remaining: None });
                 let (_, mut read) = stream.split();
-                while let Some(msg) = read.next().await {
-                    let Ok(msg) = msg else { break };
+                // Also wake every second so a URL change in settings takes
+                // effect even when the old server is quiet.
+                let mut tick = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    let msg = tokio::select! {
+                        m = read.next() => m,
+                        _ = tick.tick() => {
+                            if *comfy.base_url.read().await != http { break; }
+                            continue;
+                        }
+                    };
+                    let Some(Ok(msg)) = msg else { break };
                     match msg {
                         tokio_tungstenite::tungstenite::Message::Text(t) => {
                             let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
@@ -237,15 +250,38 @@ fn substitute(v: &mut Value, vars: &HashMap<&str, Value>) {
     }
 }
 
-/// Load a template, preferring a user override in `<app_config>/workflows/`.
-fn load_template(override_dir: Option<&Path>, name: &str, builtin: &str) -> Result<Value, String> {
-    if let Some(dir) = override_dir {
-        let p = dir.join(name);
-        if let Ok(s) = std::fs::read_to_string(&p) {
-            return serde_json::from_str(&s).map_err(|e| format!("Bad workflow override {}: {e}", p.display()));
+/// Build a workflow for `kind` from the selected family's template, with the
+/// model selection and family sampling defaults filled in plus `vars`.
+fn build_workflow(cfg: &ModelConfig, kind: &str, override_dir: Option<&Path>, vars: &mut HashMap<&str, Value>) -> Result<Value, String> {
+    let fam = cfg.family()?;
+    let mut wf = fam.template(kind, override_dir)?;
+    for (k, v) in cfg.vars()? {
+        vars.insert(k, v);
+    }
+    substitute(&mut wf, vars);
+    Ok(wf)
+}
+
+/// A tiny 256² text-to-image that only writes a temp preview (used for the
+/// launch warm-up and the settings "Test" button).
+fn preview_workflow(cfg: &ModelConfig, override_dir: Option<&Path>, steps: u32) -> Result<Value, String> {
+    let fam = cfg.family()?;
+    let mut vars: HashMap<&str, Value> = HashMap::new();
+    for (k, v) in [("prompt", json!("a small red apple on a wooden table")), ("negative", json!("")), ("seed", json!(0)),
+                   ("width", json!(256)), ("height", json!(256)), ("steps", json!(steps)), ("cfg", json!(fam.defaults.cfg)),
+                   ("prefix", json!("board/_warmup"))] {
+        vars.insert(k, v);
+    }
+    let mut wf = build_workflow(cfg, "t2i", override_dir, &mut vars)?;
+    for node in wf.as_object_mut().into_iter().flatten().map(|(_, n)| n) {
+        if node["class_type"] == "SaveImage" {
+            node["class_type"] = json!("PreviewImage");
+            if let Some(i) = node["inputs"].as_object_mut() {
+                i.remove("filename_prefix");
+            }
         }
     }
-    serde_json::from_str(builtin).map_err(|e| format!("Bad builtin workflow {name}: {e}"))
+    Ok(wf)
 }
 
 // ---------------------------------------------------------------------------
@@ -328,9 +364,9 @@ enum Outcome {
 
 /// Entry point used by the `generate` command. Never panics; every failure is
 /// reported to the card via a `gen://error` event.
-pub async fn run_job(app: Sink, comfy: Arc<Comfy>, req: GenRequest, override_dir: Option<PathBuf>) {
+pub async fn run_job(app: Sink, comfy: Arc<Comfy>, req: GenRequest) {
     let card_id = req.card_id.clone();
-    let res = run_job_inner(&app, &comfy, &req, override_dir.as_deref()).await;
+    let res = run_job_inner(&app, &comfy, &req).await;
     comfy.jobs.write().await.remove(&card_id);
     match res {
         Ok(done) => {
@@ -361,7 +397,6 @@ async fn run_job_inner(
     app: &Sink,
     comfy: &Arc<Comfy>,
     req: &GenRequest,
-    override_dir: Option<&Path>,
 ) -> Result<DonePayload, (String, bool)> {
     let e = |m: String| (m, false);
     let board_dir = PathBuf::from(&req.board_dir);
@@ -375,7 +410,7 @@ async fn run_job_inner(
             }
             pid.clone()
         }
-        None => queue_new(app, comfy, req, override_dir, &board_dir).await.map_err(e)?,
+        None => queue_new(app, comfy, req, &board_dir).await.map_err(e)?,
     };
     comfy.jobs.write().await.insert(req.card_id.clone(), prompt_id.clone());
     let _ = app.emit("gen://progress", ProgressPayload {
@@ -416,7 +451,7 @@ async fn prompt_known(comfy: &Comfy, pid: &str) -> bool {
 }
 
 /// Build the workflow from its template, upload any source image, queue it.
-async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, override_dir: Option<&Path>, board_dir: &Path) -> Result<String, String> {
+async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, board_dir: &Path) -> Result<String, String> {
     let e = |m: String| m;
     progress(app, &req.card_id, "preparing", None, None, None);
 
@@ -435,50 +470,90 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, override_dir: Op
     // ours under board/<board name>/.
     vars.insert("prefix", json!(format!("board/{}", board_slug(board_dir))));
 
-    let mut workflow = match req.kind.as_str() {
-        "t2i" => load_template(override_dir, "t2i.json", T2I_TEMPLATE).map_err(e)?,
+    let cfg = comfy.models.read().await.clone();
+    let fam = cfg.family()?;
+    match req.kind.as_str() {
+        "t2i" => {}
         kind @ ("edit" | "variation") => {
+            if !fam.supports(kind) {
+                return Err(format!("The {} model family doesn't support {kind}. Pick another family in Settings > Models.", fam.label));
+            }
             let src = req.source.as_ref().ok_or_else(|| e("Edit needs a source image".into()))?;
             let src_path = crate::board::resolve_asset(board_dir, src).map_err(e)?;
             let name = upload_image(comfy, &src_path).await.map_err(e)?;
             vars.insert("image", json!(name));
-            if kind == "edit" {
-                load_template(override_dir, "edit.json", EDIT_TEMPLATE).map_err(e)?
-            } else {
-                load_template(override_dir, "variation.json", VARIATION_TEMPLATE).map_err(e)?
-            }
         }
         other => return Err(e(format!("Unknown generation kind '{other}'"))),
-    };
-    substitute(&mut workflow, &vars);
+    }
+    let workflow = build_workflow(&cfg, &req.kind, comfy.override_dir.as_deref(), &mut vars)?;
     queue_prompt(comfy, &workflow).await
 }
 
-/// Load the Flux models in the background so the user's first image is fast:
-/// a 1-step 256² text-to-image whose result goes to ComfyUI's temp folder.
-/// Skipped when ComfyUI is busy with anything else.
-pub async fn warmup(comfy: &Comfy, override_dir: Option<&Path>) -> Result<(), String> {
+/// Load the selected models in the background so the user's first image is
+/// fast: a 1-step 256² text-to-image whose result only goes to ComfyUI's temp
+/// folder. Skipped when ComfyUI is busy with anything else.
+pub async fn warmup(comfy: &Comfy) -> Result<(), String> {
     let q = comfy.get_json("/queue").await?;
     let busy = |k: &str| q[k].as_array().map(|a| !a.is_empty()).unwrap_or(true);
     if busy("queue_running") || busy("queue_pending") {
         return Ok(());
     }
-    let mut wf = load_template(override_dir, "t2i.json", T2I_TEMPLATE)?;
-    let mut vars: HashMap<&str, Value> = HashMap::new();
-    for (k, v) in [("prompt", json!("warmup")), ("negative", json!("")), ("seed", json!(0)), ("width", json!(256)),
-                   ("height", json!(256)), ("steps", json!(1)), ("cfg", json!(1.0)), ("prefix", json!("board/_warmup"))] {
-        vars.insert(k, v);
-    }
-    substitute(&mut wf, &vars);
-    for node in wf.as_object_mut().into_iter().flatten().map(|(_, n)| n) {
-        if node["class_type"] == "SaveImage" {
-            node["class_type"] = json!("PreviewImage");
-            if let Some(i) = node["inputs"].as_object_mut() {
-                i.remove("filename_prefix");
-            }
-        }
-    }
+    let cfg = comfy.models.read().await.clone();
+    let wf = preview_workflow(&cfg, comfy.override_dir.as_deref(), 1)?;
     queue_prompt(comfy, &wf).await.map(|_| ())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTest {
+    pub seconds: f64,
+}
+
+/// Settings "Test": render a few-step 256² image with `cfg` (not yet saved)
+/// and wait for it, so bad combinations surface in settings.
+pub async fn test_models(comfy: &Arc<Comfy>, cfg: &ModelConfig) -> Result<ModelTest, String> {
+    let fam = cfg.family()?;
+    let wf = preview_workflow(cfg, comfy.override_dir.as_deref(), fam.defaults.test_steps)?;
+    let t = std::time::Instant::now();
+    let mut rx = comfy.events.subscribe();
+    let pid = queue_prompt(comfy, &wf).await?;
+    let quiet = Sink(Arc::new(|_, _| {}));
+    let outcome = tokio::time::timeout(Duration::from_secs(900), wait_for(&quiet, comfy, &mut rx, "model-test", &pid))
+        .await
+        .map_err(|_| "Test timed out after 15 minutes".to_string())?;
+    match outcome {
+        Outcome::Success => Ok(ModelTest { seconds: t.elapsed().as_secs_f64() }),
+        Outcome::Interrupted => Err("Test was cancelled in ComfyUI".into()),
+        Outcome::Error(m) if is_oom(&m) => Err(format!("GPU out of memory: {m}")),
+        Outcome::Error(m) => Err(m),
+    }
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLists {
+    pub diffusion_models: Vec<String>,
+    pub text_encoders: Vec<String>,
+    pub vae: Vec<String>,
+    pub checkpoints: Vec<String>,
+    pub clip_types: Vec<String>,
+}
+
+/// Installed model files per folder, plus CLIPLoader's `type` options.
+pub async fn list_models(comfy: &Comfy) -> Result<ModelLists, String> {
+    let strings = |v: &Value| v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>();
+    let mut out = ModelLists::default();
+    for (folder, slot) in [
+        ("diffusion_models", &mut out.diffusion_models),
+        ("text_encoders", &mut out.text_encoders),
+        ("vae", &mut out.vae),
+        ("checkpoints", &mut out.checkpoints),
+    ] {
+        *slot = strings(&comfy.get_json(&format!("/models/{folder}")).await?);
+    }
+    let clip = comfy.get_json("/object_info/CLIPLoader").await?;
+    out.clip_types = strings(&clip["CLIPLoader"]["input"]["required"]["type"][0]);
+    Ok(out)
 }
 
 /// Board folder name reduced to a safe ComfyUI subfolder name.
@@ -707,7 +782,7 @@ pub struct CheckReport {
     pub vram_free_mb: Option<u64>,
 }
 
-pub async fn check(comfy: &Comfy, override_dir: Option<&Path>) -> CheckReport {
+pub async fn check(comfy: &Comfy) -> CheckReport {
     let mut problems = vec![];
     let stats = match comfy.get_json("/system_stats").await {
         Ok(s) => s,
@@ -721,14 +796,17 @@ pub async fn check(comfy: &Comfy, override_dir: Option<&Path>) -> CheckReport {
         Ok(i) => i,
         Err(m) => return CheckReport { connected: true, problems: vec![m], device, vram_free_mb },
     };
-    for (label, name, builtin) in [
-        ("Text-to-image", "t2i.json", T2I_TEMPLATE),
-        ("Edit", "edit.json", EDIT_TEMPLATE),
-        ("Variation", "variation.json", VARIATION_TEMPLATE),
-    ] {
-        let wf = match load_template(override_dir, name, builtin) {
+    let cfg = comfy.models.read().await.clone();
+    let fam = match cfg.family() {
+        Ok(f) => f,
+        Err(m) => return CheckReport { connected: true, problems: vec![m], device, vram_free_mb },
+    };
+    for kind in fam.kinds() {
+        let label = match kind { "t2i" => "Text-to-image", "edit" => "Edit", _ => "Variation" };
+        // Model names are filled in so they get validated against ComfyUI's file lists.
+        let wf = match build_workflow(&cfg, kind, comfy.override_dir.as_deref(), &mut HashMap::new()) {
             Ok(w) => w,
-            Err(m) => { problems.push(m); continue; }
+            Err(m) => { problems.push(format!("{label}: {m}")); continue; }
         };
         for (id, node) in wf.as_object().into_iter().flatten() {
             let class = node["class_type"].as_str().unwrap_or("");
@@ -739,7 +817,7 @@ pub async fn check(comfy: &Comfy, override_dir: Option<&Path>) -> CheckReport {
             // Check combo (file list) inputs such as unet_name / clip_name / vae_name.
             for (key, val) in node["inputs"].as_object().into_iter().flatten() {
                 let Some(s) = val.as_str() else { continue };
-                if s.starts_with("{{") { continue; }
+                if s.contains("{{") { continue; }
                 let spec = def["input"]["required"].get(key).or_else(|| def["input"]["optional"].get(key));
                 let Some(spec) = spec else { continue };
                 if let Some(opts) = spec[0].as_array() {
@@ -773,7 +851,8 @@ mod tests {
 
     #[test]
     fn substitutes_typed_values() {
-        let mut v: Value = serde_json::from_str(T2I_TEMPLATE).unwrap();
+        let fam = crate::models::family("flux_klein").unwrap();
+        let mut v: Value = fam.template("t2i", None).unwrap();
         let mut vars = HashMap::new();
         vars.insert("prompt", json!("a fox"));
         vars.insert("seed", json!(42u64));
@@ -783,25 +862,23 @@ mod tests {
         assert_eq!(v["7"]["inputs"]["seed"], 42);
         assert_eq!(v["6"]["inputs"]["width"], 512);
 
-        let mut v: Value = serde_json::from_str(EDIT_TEMPLATE).unwrap();
         let mut vars = HashMap::new();
         vars.insert("prefix", json!("board/my_board"));
-        substitute(&mut v, &vars);
+        let v = build_workflow(&ModelConfig::default(), "edit", None, &mut vars).unwrap();
         assert_eq!(v["9"]["inputs"]["filename_prefix"], "board/my_board/edit");
+        assert_eq!(v["1"]["inputs"]["unet_name"], "flux3-image-klein-base-int8-convrot.safetensors");
+        assert_eq!(v["2"]["inputs"]["type"], "flux3");
+        assert_eq!(v["7"]["inputs"]["sampler_name"], "euler");
     }
 
-    /// Generate and edit must share loader nodes (same ids + inputs) so
-    /// ComfyUI's execution cache keeps the models loaded across both.
     #[test]
-    fn templates_share_loaders() {
-        let t: Value = serde_json::from_str(T2I_TEMPLATE).unwrap();
-        for other in [EDIT_TEMPLATE, VARIATION_TEMPLATE] {
-            let e: Value = serde_json::from_str(other).unwrap();
-            for id in ["1", "2", "3", "5"] {
-                assert_eq!(t[id]["class_type"], e[id]["class_type"], "node {id}");
-                assert_eq!(t[id]["inputs"], e[id]["inputs"], "node {id}");
-            }
-        }
+    fn preview_workflow_writes_no_files() {
+        let cfg = ModelConfig { family: "checkpoint".into(), ckpt: "sd_xl_base_1.0.safetensors".into(), ..Default::default() };
+        let wf = preview_workflow(&cfg, None, 4).unwrap();
+        assert_eq!(wf["9"]["class_type"], "PreviewImage");
+        assert_eq!(wf["1"]["inputs"]["ckpt_name"], "sd_xl_base_1.0.safetensors");
+        assert_eq!(wf["7"]["inputs"]["scheduler"], "karras");
+        assert!(!serde_json::to_string(&wf).unwrap().contains("{{"));
     }
 
     #[test]

@@ -1,0 +1,16 @@
+{
+  "1": { "class_type": "CheckpointLoaderSimple", "_meta": { "title": "Load checkpoint" },
+         "inputs": { "ckpt_name": "{{ckpt}}" } },
+  "4": { "class_type": "CLIPTextEncode", "_meta": { "title": "Positive" },
+         "inputs": { "text": "{{prompt}}", "clip": ["1", 1] } },
+  "5": { "class_type": "CLIPTextEncode", "_meta": { "title": "Negative" },
+         "inputs": { "text": "{{negative}}", "clip": ["1", 1] } },
+  "6": { "class_type": "EmptyLatentImage",
+         "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 } },
+  "7": { "class_type": "KSampler",
+         "inputs": { "model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0],
+                     "seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}",
+                     "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": 1.0 } },
+  "8": { "class_type": "VAEDecode", "inputs": { "samples": ["7", 0], "vae": ["1", 2] } },
+  "9": { "class_type": "SaveImage", "inputs": { "images": ["8", 0], "filename_prefix": "{{prefix}}/t2i" } }
+}

@@ -1,5 +1,6 @@
 pub mod board;
 pub mod comfy;
+pub mod models;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,7 +8,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use comfy::{CheckReport, Comfy, GenRequest, Sink};
+use comfy::{CheckReport, Comfy, GenRequest, ModelLists, ModelTest, Sink};
+use models::{FAMILIES, Family, ModelConfig};
 
 fn sink(app: &AppHandle) -> Sink {
     let app = app.clone();
@@ -28,8 +30,8 @@ struct ImportedAsset {
     height: u32,
 }
 
-/// `<app_config>/workflows/` — drop `t2i.json` / `edit.json` here to override
-/// the built-in templates without rebuilding.
+/// `<app_config>/workflows/<family>/{t2i,edit,variation}.json` override the
+/// built-in templates without rebuilding.
 fn override_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("workflows"))
 }
@@ -42,8 +44,45 @@ fn allow_board(app: &AppHandle, dir: &std::path::Path) -> Result<(), String> {
 // --- ComfyUI -----------------------------------------------------------------
 
 #[tauri::command]
-async fn comfy_check(app: AppHandle, state: State<'_, AppState>) -> Result<CheckReport, String> {
-    Ok(comfy::check(&state.comfy, override_dir(&app).as_deref()).await)
+async fn comfy_check(state: State<'_, AppState>) -> Result<CheckReport, String> {
+    Ok(comfy::check(&state.comfy).await)
+}
+
+// --- Model setup ---------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelSetup {
+    config: ModelConfig,
+    families: &'static [Family],
+}
+
+#[tauri::command]
+async fn models_get(state: State<'_, AppState>) -> Result<ModelSetup, String> {
+    Ok(ModelSetup { config: state.comfy.models.read().await.clone(), families: FAMILIES })
+}
+
+/// Installed files from ComfyUI (fails when ComfyUI is offline).
+#[tauri::command]
+async fn models_list(state: State<'_, AppState>) -> Result<ModelLists, String> {
+    comfy::list_models(&state.comfy).await
+}
+
+/// Save and activate a selection. Nothing is freed or loaded here: the next
+/// generation loads the new models.
+#[tauri::command]
+async fn models_set(app: AppHandle, config: ModelConfig, state: State<'_, AppState>) -> Result<(), String> {
+    config.family()?;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    models::save_config(&dir, &config)?;
+    *state.comfy.models.write().await = config;
+    Ok(())
+}
+
+/// Render a tiny test image with a (possibly unsaved) selection.
+#[tauri::command]
+async fn models_test(config: ModelConfig, state: State<'_, AppState>) -> Result<ModelTest, String> {
+    comfy::test_models(&state.comfy, &config).await
 }
 
 #[tauri::command]
@@ -71,8 +110,7 @@ async fn generate(app: AppHandle, req: GenRequest, state: State<'_, AppState>) -
     if req.resume_prompt_id.is_some() && comfy.jobs.read().await.contains_key(&req.card_id) {
         return Ok(());
     }
-    let ov = override_dir(&app);
-    tauri::async_runtime::spawn(comfy::run_job(sink(&app), comfy, req, ov));
+    tauri::async_runtime::spawn(comfy::run_job(sink(&app), comfy, req));
     Ok(())
 }
 
@@ -178,15 +216,15 @@ fn percent_decode(s: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let comfy = Arc::new(Comfy::new());
-    let comfy_exit = comfy.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { comfy: comfy.clone() })
         .setup(move |app| {
-            let ov = override_dir(app.handle());
-            tauri::async_runtime::spawn(comfy::ws_loop(sink(app.handle()), comfy.clone(), ov));
+            let config_dir = app.path().app_config_dir().ok();
+            let models = models::load_config(config_dir.as_deref());
+            let comfy = Arc::new(Comfy::new(models, override_dir(app.handle())));
+            app.manage(AppState { comfy: comfy.clone() });
+            tauri::async_runtime::spawn(comfy::ws_loop(sink(app.handle()), comfy));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -195,6 +233,10 @@ pub fn run() {
             comfy_set_url,
             generate,
             cancel_generation,
+            models_get,
+            models_list,
+            models_set,
+            models_test,
             comfy_free,
             board_new,
             board_open,
@@ -205,11 +247,12 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |_app, event| {
+        .run(move |app, event| {
             // Release ComfyUI's VRAM when the board closes (only then: models
             // stay loaded between generations so they remain fast).
             if let tauri::RunEvent::Exit = event {
-                let c = comfy_exit.clone();
+                let Some(state) = app.try_state::<AppState>() else { return };
+                let c = state.comfy.clone();
                 let _ = tauri::async_runtime::block_on(comfy::free_memory(&c, std::time::Duration::from_secs(2)));
             }
         });

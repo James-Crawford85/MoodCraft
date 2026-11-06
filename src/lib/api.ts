@@ -15,7 +15,21 @@ export interface Imported {
   height: number;
 }
 
+export interface ModelConfig { family: string; unet: string; clip: string; clipType: string; vae: string; ckpt: string }
+type HintList = string[][];
+export interface Family {
+  id: string; label: string; description: string; loaders: "split" | "checkpoint"; clipType: string;
+  hints: { unet: HintList; clip: HintList; vae: HintList; ckpt: HintList };
+  defaults: { size: number; steps: number; cfg: number; editSteps: number; editCfg: number; variationStrength: number; sampler: string; scheduler: string; testSteps: number };
+  supportsEdit: boolean; supportsVariation: boolean;
+}
+export interface ModelLists { diffusionModels: string[]; textEncoders: string[]; vae: string[]; checkpoints: string[]; clipTypes: string[] }
+
 export const api = {
+  modelsGet: () => invoke<{ config: ModelConfig; families: Family[] }>("models_get"),
+  modelsList: () => invoke<ModelLists>("models_list"),
+  modelsSet: (config: ModelConfig) => invoke<void>("models_set", { config }),
+  modelsTest: (config: ModelConfig) => invoke<{ seconds: number }>("models_test", { config }),
   comfyCheck: () => invoke<CheckReport>("comfy_check"),
   comfyStatus: () => invoke<[boolean, string]>("comfy_status"),
   comfySetUrl: (url: string) => invoke<void>("comfy_set_url", { url }),

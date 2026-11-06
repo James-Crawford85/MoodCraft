@@ -8,6 +8,8 @@
   import { api } from "$lib/api";
   import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
+  import ModelSetup from "$lib/ModelSetup.svelte";
+  import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
 
   let canvas: Canvas;
   let prompt = $state("");
@@ -27,6 +29,8 @@
   const sel = $derived(board.selection);
   const single = $derived(sel.length === 1 ? sel[0] : null);
   const selImage = $derived(single?.type === "image" && single.status === "ready" ? (single as ImageCard) : null);
+  /** The prompt bar edits the selected image only if the active model family supports edits. */
+  const editMode = $derived(!!selImage && canEdit());
   const toolbarPos = $derived.by(() => {
     if (!sel.length) return null;
     const b = bounds(sel);
@@ -173,7 +177,7 @@
       toast("ComfyUI is not running. Start it from the Comfy Desktop app, then try again.", "error");
       return;
     }
-    if (selImage) editImage(selImage, prompt, board.settings.count);
+    if (selImage && editMode) editImage(selImage, prompt, board.settings.count);
     else generateFromPrompt(prompt);
     prompt = "";
   }
@@ -220,6 +224,7 @@
     let unDrop: (() => void) | undefined;
     (async () => {
       unlisten = await initGenEvents();
+      await loadModels().catch((e) => toast(`Model settings: ${e}`, "error"));
       if (board.settings.comfyUrl !== "http://127.0.0.1:8188") await api.comfySetUrl(board.settings.comfyUrl).catch(() => {});
       const [connected, url] = await api.comfyStatus();
       comfyState.connected = connected;
@@ -302,11 +307,13 @@
   {#if toolbarPos && sel.length}
     <div class="ctx" style="left:{toolbarPos.x}px; top:{toolbarPos.y}px;" data-action>
       {#if selImage}
-        <button class="btn" disabled={!comfyState.connected} onclick={() => variations(selImage, board.settings.count)} title="Flux img2img variations: same prompt, new composition (strength in ⚙)">✦ Variations</button>
+        <button class="btn" disabled={!comfyState.connected || !canVary()} onclick={() => variations(selImage, board.settings.count)} title={canVary() ? "Variations: same prompt, new composition (strength in ⚙)" : `${activeFamily()?.label} doesn't support variations`}>✦ Variations</button>
+        {#if canEdit()}
         <form class="inline" onsubmit={(e) => { e.preventDefault(); if (editPrompt.trim()) { editImage(selImage, editPrompt); editPrompt = ""; } }}>
           <input placeholder="Edit: e.g. make it night time" bind:value={editPrompt} onkeydown={(e) => e.stopPropagation()} />
           <button class="btn" type="submit" disabled={!editPrompt.trim() || !comfyState.connected}>Edit</button>
         </form>
+        {/if}
         {#if selImage.gen}<button class="btn ghost" onclick={() => reroll(selImage)} title="Same prompt, new seed">↻</button>{/if}
         {#if selImage.prompt}<button class="btn ghost" onclick={() => { prompt = selImage.prompt ?? ""; document.getElementById("prompt")?.focus(); }} title={selImage.prompt}>Prompt</button>{/if}
       {:else if single?.type === "note"}
@@ -330,8 +337,8 @@
 
   <!-- Bottom prompt bar -->
   <div class="promptbar">
-    {#if selImage}
-      <div class="chip" title="Your prompt will edit the selected image (Flux Klein reference edit)">
+    {#if editMode && selImage}
+      <div class="chip" title="Your prompt will edit the selected image">
         {#if selImage.asset}<span class="thumb-dot"></span>{/if}Editing selected image
         <button class="x" onclick={() => (board.selected = new Set())} aria-label="Clear selection">×</button>
       </div>
@@ -339,17 +346,17 @@
     <textarea
       id="prompt"
       rows="1"
-      placeholder={selImage ? "Describe the change… (Enter)" : "Describe an image to generate… (Enter)  ·  / to focus"}
+      placeholder={editMode ? "Describe the change… (Enter)" : "Describe an image to generate… (Enter)  ·  / to focus"}
       bind:value={prompt}
       onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitPrompt(); } if (e.key === "Escape") (e.target as HTMLElement).blur(); }}
     ></textarea>
-    <select bind:value={board.settings.aspect} onchange={() => board.saveSettings()} title="Aspect ratio (text-to-image)" disabled={!!selImage}>
+    <select bind:value={board.settings.aspect} onchange={() => board.saveSettings()} title="Aspect ratio (text-to-image)" disabled={editMode}>
       {#each ["1:1", "4:3", "3:4", "16:9", "9:16"] as a}<option value={a}>{a}</option>{/each}
     </select>
     <select bind:value={board.settings.count} onchange={() => board.saveSettings()} title="How many images">
       {#each [1, 2, 3, 4] as n}<option value={n}>×{n}</option>{/each}
     </select>
-    <button class="btn primary" onclick={submitPrompt} disabled={!prompt.trim()}>{selImage ? "Edit" : "Generate"}</button>
+    <button class="btn primary" onclick={submitPrompt} disabled={!prompt.trim()}>{editMode ? "Edit" : "Generate"}</button>
   </div>
 
   <!-- Zoom controls -->
@@ -364,6 +371,10 @@
   {#if showSettings}
     <aside class="settings" data-action>
       <div class="sh"><h3>Settings</h3><button class="btn ghost icon" onclick={() => (showSettings = false)}>×</button></div>
+      <section>
+        <h4>Models</h4>
+        <ModelSetup />
+      </section>
       <section>
         <h4>ComfyUI</h4>
         <div class="row">
@@ -382,18 +393,18 @@
         <button class="btn ghost" onclick={refreshCheck}>Re-check</button>
       </section>
       <section>
-        <h4>Text → image <span class="sub">Flux3 Klein base</span></h4>
+        <h4>Text → image <span class="sub">{activeFamily()?.label ?? ""}</span></h4>
         <label>Size (long side ≈) <input type="number" min="256" max="1536" step="64" bind:value={board.settings.t2iSize} onchange={() => board.saveSettings()} /></label>
         <label>Steps <input type="number" min="1" max="80" bind:value={board.settings.t2iSteps} onchange={() => board.saveSettings()} /></label>
         <label>CFG <input type="number" min="1" max="10" step="0.1" bind:value={board.settings.t2iCfg} onchange={() => board.saveSettings()} /></label>
       </section>
       <section>
-        <h4>Edit <span class="sub">Flux Klein reference edit</span></h4>
+        <h4>Edit <span class="sub">{canEdit() ? "reference edit" : "not supported by this family"}</span></h4>
         <label>Steps <input type="number" min="1" max="60" bind:value={board.settings.fluxEditSteps} onchange={() => board.saveSettings()} /></label>
         <label>CFG <input type="number" min="1" max="10" step="0.1" bind:value={board.settings.fluxEditCfg} onchange={() => board.saveSettings()} /></label>
-        <h4>Variations <span class="sub">Flux img2img, uses the text-to-image steps/CFG</span></h4>
+        <h4>Variations <span class="sub">img2img, uses the text-to-image steps/CFG</span></h4>
         <label>Strength <input type="number" min="0.1" max="1" step="0.05" bind:value={board.settings.variationStrength} onchange={() => board.saveSettings()} /></label>
-        <p class="hint">Generate, edit and variations share one Flux Klein model set, so switching between them doesn't reload models. Edits and variations output at the text-to-image size, keeping the source's aspect ratio.</p>
+        <p class="hint">Generate, edit and variations share the same loaded models, so switching between them doesn't reload anything. Edits and variations output at the text-to-image size, keeping the source's aspect ratio.</p>
       </section>
       <section>
         <h4>Shortcuts</h4>
@@ -682,7 +693,7 @@
     position: absolute;
     top: 56px;
     right: 12px;
-    width: 340px;
+    width: 380px;
     max-height: calc(100% - 140px);
     overflow: auto;
     background: var(--surface);
