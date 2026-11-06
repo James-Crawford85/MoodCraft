@@ -6,7 +6,7 @@
   import Canvas from "$lib/Canvas.svelte";
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
-  import { comfyState, editImage, remixImages, remixRefs, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
+  import { comfyState, editImage, remixImages, remixRefs, scatterFromPrompt, SCATTER_COUNTS, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
@@ -180,8 +180,11 @@
       toast("ComfyUI is not running. Start it from the Comfy Desktop app, then try again.", "error");
       return;
     }
-    if (remixMode) remixImages(remix, prompt, board.settings.count);
-    else if (selImage && editMode) editImage(selImage, prompt, board.settings.count);
+    // Scatter is text-to-image only; edits and remixes make at most 4.
+    const n = Math.min(board.settings.count, 4);
+    if (remixMode) remixImages(remix, prompt, n);
+    else if (selImage && editMode) editImage(selImage, prompt, n);
+    else if (board.settings.count > 4) scatterFromPrompt(prompt, board.settings.count);
     else generateFromPrompt(prompt);
     prompt = "";
   }
@@ -362,8 +365,11 @@
     <select bind:value={board.settings.aspect} onchange={() => board.saveSettings()} title="Aspect ratio (text-to-image)" disabled={editMode || remixMode}>
       {#each ["1:1", "4:3", "3:4", "16:9", "9:16"] as a}<option value={a}>{a}</option>{/each}
     </select>
-    <select bind:value={board.settings.count} onchange={() => board.saveSettings()} title="How many images">
+    <select bind:value={board.settings.count} onchange={() => board.saveSettings()} title="How many images. Scatter: that many different takes on the prompt (lighting, camera, palette, medium, mood), gathered in a new frame">
       {#each [1, 2, 3, 4] as n}<option value={n}>×{n}</option>{/each}
+      <optgroup label="Scatter (text → image)">
+        {#each SCATTER_COUNTS as n}<option value={n}>Scatter ×{n}</option>{/each}
+      </optgroup>
     </select>
     <button class="btn primary" onclick={submitPrompt} disabled={!prompt.trim()}>{remixMode ? "Remix" : editMode ? "Edit" : "Generate"}</button>
   </div>

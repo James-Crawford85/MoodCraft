@@ -78,6 +78,59 @@ export function generateFromPrompt(prompt: string, count = board.settings.count)
   selectGenerated(ids);
 }
 
+// --- Scatter: one prompt → N different takes ---------------------------------
+// Each concept gets one modifier from every set (shuffled, so no two concepts
+// share a lighting, camera, ... until a set runs out) and its own seed.
+const SCATTER_SETS: string[][] = [
+  // lighting
+  ["golden hour light", "overcast soft light", "dramatic rim lighting", "harsh midday sun", "moody low-key lighting",
+   "neon night lighting", "foggy diffused light", "candlelit warm glow", "cold moonlight", "backlit silhouette", "studio softbox lighting", "volumetric god rays"],
+  // camera
+  ["wide establishing shot", "close-up", "low angle", "high angle looking down", "eye-level medium shot", "aerial view",
+   "telephoto compression", "dutch angle", "over-the-shoulder view", "symmetrical front view", "extreme wide shot", "macro detail shot"],
+  // palette
+  ["muted earth tones", "teal and orange palette", "monochrome blue palette", "desaturated greys with one red accent", "warm amber palette",
+   "pastel palette", "high-contrast black and white", "sickly green tint", "deep purples and magentas", "sepia tones", "cool cyan palette", "rich jewel tones"],
+  // medium
+  ["cinematic film still", "concept art painting", "35mm photograph", "gouache illustration", "charcoal sketch", "3D render",
+   "matte painting", "ink and wash", "oil painting", "polaroid photo", "digital painting", "pencil storyboard frame"],
+  // mood
+  ["eerie and unsettling", "calm and quiet", "tense", "melancholic", "mysterious", "hopeful", "oppressive", "dreamlike",
+   "lonely", "chaotic", "serene", "foreboding"],
+];
+function shuffled<T>(a: T[]): T[] {
+  const b = [...a];
+  for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; }
+  return b;
+}
+export const SCATTER_COUNTS = [8, 12];
+
+/** N concepts from one prompt, in a grid inside a new frame titled with the prompt. */
+export function scatterFromPrompt(prompt: string, n: number) {
+  prompt = prompt.trim();
+  if (!prompt) return;
+  const { width, height } = t2iSize();
+  const sets = SCATTER_SETS.map(shuffled);
+  const cols = Math.ceil(Math.sqrt(n * 1.5)), rows = Math.ceil(n / cols);
+  const cw = 300, ch = Math.round((cw * height) / width), gap = 24, pad = 32, head = 56;
+  const fw = pad * 2 + cols * cw + (cols - 1) * gap, fh = head + pad + rows * ch + (rows - 1) * gap;
+  const sel = board.selection;
+  const want = sel.length
+    ? (() => { const b = bounds(sel); return { x: b.x + b.w + 48, y: b.y }; })()
+    : (() => { const c = board.viewportCenter(); return { x: c.x - fw / 2, y: c.y - fh / 2 }; })();
+  const at = board.freeSpot(want.x, want.y, fw, fh);
+  board.checkpoint();
+  const label = prompt.length > 80 ? prompt.slice(0, 77) + "…" : prompt;
+  const frame = board.addFrameRect({ x: at.x, y: at.y, w: fw, h: fh }, `Scatter: ${label}`);
+  for (let i = 0; i < n; i++) {
+    const mods = sets.map((s) => s[i % s.length]).join(", ");
+    const gen: GenParams = { kind: "t2i", prompt: `${prompt}, ${mods}`, seed: randomSeed(), width, height, steps: board.settings.t2iSteps, cfg: board.settings.t2iCfg };
+    const x = at.x + pad + (i % cols) * (cw + gap), y = at.y + head + Math.floor(i / cols) * (ch + gap);
+    start(board.addPending(gen, { x, y }, undefined, cw, true));
+  }
+  board.selected = autoSelection = new Set([frame.id]);
+}
+
 /** Output size for edits/variations: the source's aspect at the t2i pixel budget. */
 function sizeLike(src: ImageCard) {
   const natW = src.naturalW ?? src.w, natH = src.naturalH ?? src.h;

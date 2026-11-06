@@ -179,6 +179,14 @@ class Board {
     return card;
   }
 
+  /** A frame with an explicit rectangle and title, under everything else. */
+  addFrameRect(r: Rect, label: string): FrameCard {
+    const minZ = this.cards.reduce((m, c) => Math.min(m, c.z), 0);
+    const card: FrameCard = { id: uid(), type: "frame", ...r, z: minZ - 1, label, color: FRAME_COLORS[0] };
+    this.cards.push(card);
+    return card;
+  }
+
   addImage(asset: string, natW: number, natH: number, at?: { x: number; y: number }): ImageCard {
     const w = Math.min(360, natW);
     const h = Math.round((w * natH) / natW);
@@ -192,10 +200,11 @@ class Board {
   }
 
   /** Create a pending image card for a generation; caller queues the job. */
-  addPending(gen: GenParams, near: { x: number; y: number }, parentId?: string, displayW = 300): ImageCard {
+  /** With `exact`, the card goes exactly at `near` (caller already found room). */
+  addPending(gen: GenParams, near: { x: number; y: number }, parentId?: string, displayW = 300, exact = false): ImageCard {
     const w = displayW;
     const h = Math.round((w * gen.height) / gen.width);
-    const p = this.freeSpot(near.x, near.y, w, h);
+    const p = exact ? { x: near.x, y: near.y } : this.freeSpot(near.x, near.y, w, h);
     const card: ImageCard = {
       id: uid(), type: "image", ...p, w, h, z: this.nextZ(), status: "pending",
       prompt: gen.prompt, gen, parentId,
