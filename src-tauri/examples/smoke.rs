@@ -53,7 +53,7 @@ async fn main() {
             board_dir: dir.clone(),
             resume_prompt_id: None,
             denoise: Some(0.7),
-            extra_sources: vec![],
+            extra_sources: vec![], mask: None,
         };
         let t = Instant::now();
         let mut first_sample: Option<f32> = None;

@@ -12,7 +12,7 @@ export interface BaseCard {
 
 /** Parameters needed to (re)run a generation for a card. */
 export interface GenParams {
-  kind: "t2i" | "edit" | "variation";
+  kind: "t2i" | "edit" | "variation" | "inpaint";
   prompt: string;
   seed: number;
   width: number;
@@ -25,6 +25,8 @@ export interface GenParams {
   denoise?: number;
   /** Edit only: further reference images ("image 2", "image 3", …) after `source`. */
   extraSources?: string[];
+  /** Inpaint only: board-relative mask image (white = repaint). */
+  mask?: string;
 }
 
 export interface ImageCard extends BaseCard {

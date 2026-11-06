@@ -22,7 +22,7 @@ async fn main() {
         let req = GenRequest {
             card_id: card_id.clone(), kind: "edit".into(), prompt: prompt.clone(), negative: String::new(), seed: 4242,
             width: 1024, height: 576, steps: 20, cfg, source: Some(asset.clone()), board_dir: dir.clone(),
-            resume_prompt_id: None, denoise: None, extra_sources: vec![],
+            resume_prompt_id: None, denoise: None, extra_sources: vec![], mask: None,
         };
         let t = std::time::Instant::now();
         tokio::spawn(comfy::run_job(sink.clone(), c.clone(), req));

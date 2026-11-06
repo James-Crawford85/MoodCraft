@@ -90,6 +90,7 @@ pub static FAMILIES: &[Family] = &[
             ("t2i", include_str!("../workflows/flux_klein/t2i.json")),
             ("edit", include_str!("../workflows/flux_klein/edit.json")),
             ("variation", include_str!("../workflows/flux_klein/variation.json")),
+            ("inpaint", include_str!("../workflows/flux_klein/inpaint.json")),
         ],
     },
     Family {
@@ -108,6 +109,7 @@ pub static FAMILIES: &[Family] = &[
         templates: &[
             ("t2i", include_str!("../workflows/checkpoint/t2i.json")),
             ("variation", include_str!("../workflows/checkpoint/variation.json")),
+            ("inpaint", include_str!("../workflows/checkpoint/inpaint.json")),
         ],
     },
 ];
@@ -121,7 +123,7 @@ impl Family {
         match kind {
             "edit" => self.supports_edit,
             "variation" => self.supports_variation,
-            _ => true,
+            _ => self.templates.iter().any(|(k, _)| *k == kind),
         }
     }
 

@@ -216,6 +216,26 @@ export function variations(src: ImageCard, count = 1) {
   selectGenerated(ids);
 }
 
+// --- Brush inpaint ------------------------------------------------------------
+/** Repaint the masked part of `src` per `instruction`; results go beside it.
+ *  Uses the text-to-image steps/CFG (Flux Klein needs CFG ≈3.5 here; CFG 1
+ *  left malformed shapes in testing). */
+export function inpaintImage(src: ImageCard, maskAsset: string, instruction: string, count = 1) {
+  if (!src.asset || !instruction.trim()) return;
+  board.checkpoint();
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const gen: GenParams = {
+      kind: "inpaint", prompt: instruction.trim(), seed: randomSeed(), ...sizeLike(src),
+      steps: board.settings.t2iSteps, cfg: board.settings.t2iCfg, source: src.asset, mask: maskAsset,
+    };
+    const card = board.addPending(gen, { x: src.x + src.w + 32, y: src.y }, src.id, src.w);
+    ids.push(card.id);
+    start(card);
+  }
+  selectGenerated(ids);
+}
+
 // --- More like this ------------------------------------------------------------
 /** Slots around a card, nearest first: right, below, left, above, then the diagonals. */
 function fanSlots(src: ImageCard, w: number, h: number) {

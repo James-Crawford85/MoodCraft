@@ -339,6 +339,9 @@ pub struct GenRequest {
     /// Edit only: more reference images after `source` ("image 2", "image 3", …).
     #[serde(default)]
     pub extra_sources: Vec<String>,
+    /// Inpaint only: board-relative mask image (white = repaint, same aspect as `source`).
+    #[serde(default)]
+    pub mask: Option<String>,
 }
 fn d_size() -> u32 {
     768
@@ -499,7 +502,7 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, board_dir: &Path
     let fam = cfg.family()?;
     match req.kind.as_str() {
         "t2i" => {}
-        kind @ ("edit" | "variation") => {
+        kind @ ("edit" | "variation" | "inpaint") => {
             if !fam.supports(kind) {
                 return Err(format!("The {} model family doesn't support {kind}. Pick another family in Settings > Models.", fam.label));
             }
@@ -507,6 +510,13 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, board_dir: &Path
             let src_path = crate::board::resolve_asset(board_dir, src).map_err(e)?;
             let name = upload_image(comfy, &src_path).await.map_err(e)?;
             vars.insert("image", json!(name));
+            if kind == "inpaint" {
+                let mask = req.mask.as_ref().ok_or_else(|| e("Inpaint needs a mask".into()))?;
+                let mask_path = crate::board::resolve_asset(board_dir, mask).map_err(e)?;
+                vars.insert("mask", json!(upload_image(comfy, &mask_path).await.map_err(e)?));
+                // Inside the mask the content is replaced outright unless a lower strength is given.
+                vars.insert("denoise", json!(req.denoise.unwrap_or(1.0).clamp(0.05, 1.0)));
+            }
         }
         other => return Err(e(format!("Unknown generation kind '{other}'"))),
     }

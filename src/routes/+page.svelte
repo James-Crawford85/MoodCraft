@@ -9,12 +9,15 @@
   import { comfyState, editImage, moreLikeThis, remixImages, remixRefs, scatterFromPrompt, SCATTER_COUNTS, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
+  import Inpaint from "$lib/Inpaint.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
 
   let canvas: Canvas;
   let prompt = $state("");
   let editPrompt = $state("");
   let showMore = $state(false);
+  /** Image card open in the paint-a-mask editor. */
+  let painting = $state<ImageCard | null>(null);
   // Close the "More like this" options when the selection changes.
   $effect(() => { void board.selected; showMore = false; });
   let showSettings = $state(false);
@@ -347,6 +350,7 @@
           <button class="btn" type="submit" disabled={!editPrompt.trim() || !comfyState.connected}>Edit</button>
         </form>
         {/if}
+        <button class="btn ghost" disabled={!comfyState.connected} onclick={() => (painting = selImage)} title="Paint over part of the image, then describe what goes there (inpaint)">🖌 Paint</button>
         {#if selImage.gen}<button class="btn ghost" onclick={() => reroll(selImage)} title="Same prompt, new seed">↻</button>{/if}
         {#if selImage.prompt}<button class="btn ghost" onclick={() => { prompt = selImage.prompt ?? ""; document.getElementById("prompt")?.focus(); }} title={selImage.prompt}>Prompt</button>{/if}
       {:else if single?.type === "note"}
@@ -366,6 +370,10 @@
       <button class="btn ghost" onclick={() => board.bringToFront()} title="Bring to front">⤒</button>
       <button class="btn ghost danger" onclick={() => board.deleteSelected()} title="Delete (Del)">🗑</button>
     </div>
+  {/if}
+
+  {#if painting}
+    <Inpaint card={painting} onClose={() => (painting = null)} />
   {/if}
 
   <!-- Bottom prompt bar -->
