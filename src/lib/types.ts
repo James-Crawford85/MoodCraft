@@ -23,6 +23,8 @@ export interface GenParams {
   source?: string;
   /** Variation strength (img2img denoise, 0–1). */
   denoise?: number;
+  /** Edit only: further reference images ("image 2", "image 3", …) after `source`. */
+  extraSources?: string[];
 }
 
 export interface ImageCard extends BaseCard {

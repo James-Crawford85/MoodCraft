@@ -262,6 +262,28 @@ fn build_workflow(cfg: &ModelConfig, kind: &str, override_dir: Option<&Path>, va
     Ok(wf)
 }
 
+/// Wire extra reference images into the template's `ReferenceMultiLatent`
+/// (its `images.image0` is the template's own source): one `LoadImage` node per
+/// extra image as `images.image1`, `images.image2`, …. The loader nodes are
+/// untouched, so the models stay cached.
+fn add_references(wf: &mut Value, uploaded: &[String]) -> Result<(), String> {
+    if uploaded.is_empty() {
+        return Ok(());
+    }
+    let obj = wf.as_object_mut().ok_or("workflow is not an object")?;
+    let rml = obj
+        .iter()
+        .find(|(_, n)| n["class_type"] == "ReferenceMultiLatent")
+        .map(|(k, _)| k.clone())
+        .ok_or("This edit workflow has no ReferenceMultiLatent node, so it can't take several reference images.")?;
+    for (i, name) in uploaded.iter().enumerate() {
+        let id = format!("{}", 100 + i);
+        obj.insert(id.clone(), json!({ "class_type": "LoadImage", "_meta": { "title": format!("Reference image {}", i + 2) }, "inputs": { "image": name } }));
+        obj[&rml]["inputs"][format!("images.image{}", i + 1)] = json!([id, 0]);
+    }
+    Ok(())
+}
+
 /// A tiny 256² text-to-image that only writes a temp preview (used for the
 /// launch warm-up and the settings "Test" button).
 fn preview_workflow(cfg: &ModelConfig, override_dir: Option<&Path>, steps: u32) -> Result<Value, String> {
@@ -314,6 +336,9 @@ pub struct GenRequest {
     /// Variation strength (img2img denoise); ignored by other kinds.
     #[serde(default)]
     pub denoise: Option<f64>,
+    /// Edit only: more reference images after `source` ("image 2", "image 3", …).
+    #[serde(default)]
+    pub extra_sources: Vec<String>,
 }
 fn d_size() -> u32 {
     768
@@ -485,7 +510,15 @@ async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, board_dir: &Path
         }
         other => return Err(e(format!("Unknown generation kind '{other}'"))),
     }
-    let workflow = build_workflow(&cfg, &req.kind, comfy.override_dir.as_deref(), &mut vars)?;
+    let mut extra = Vec::new();
+    if req.kind == "edit" {
+        for src in &req.extra_sources {
+            let path = crate::board::resolve_asset(board_dir, src).map_err(e)?;
+            extra.push(upload_image(comfy, &path).await.map_err(e)?);
+        }
+    }
+    let mut workflow = build_workflow(&cfg, &req.kind, comfy.override_dir.as_deref(), &mut vars)?;
+    add_references(&mut workflow, &extra)?;
     queue_prompt(comfy, &workflow).await
 }
 
@@ -847,6 +880,22 @@ fn b64(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extra_references_wire_into_reference_multi_latent() {
+        let cfg = crate::models::ModelConfig::default();
+        let mut vars = std::collections::HashMap::new();
+        let mut wf = super::build_workflow(&cfg, "edit", None, &mut vars).unwrap();
+        super::add_references(&mut wf, &["board/a.png".into(), "board/b.png".into()]).unwrap();
+        assert_eq!(wf["100"]["inputs"]["image"], "board/a.png");
+        let rml = &wf["11"]["inputs"];
+        assert_eq!(rml["images.image0"], serde_json::json!(["10", 0]));
+        assert_eq!(rml["images.image1"], serde_json::json!(["100", 0]));
+        assert_eq!(rml["images.image2"], serde_json::json!(["101", 0]));
+        let mut t2i = super::build_workflow(&cfg, "t2i", None, &mut vars).unwrap();
+        assert!(super::add_references(&mut t2i, &["x".into()]).is_err());
+        assert!(super::add_references(&mut t2i, &[]).is_ok());
+    }
+
     use super::*;
 
     #[test]

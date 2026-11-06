@@ -6,7 +6,7 @@
   import Canvas from "$lib/Canvas.svelte";
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
-  import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
+  import { comfyState, editImage, remixImages, remixRefs, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
@@ -31,6 +31,9 @@
   const selImage = $derived(single?.type === "image" && single.status === "ready" ? (single as ImageCard) : null);
   /** The prompt bar edits the selected image only if the active model family supports edits. */
   const editMode = $derived(!!selImage && canEdit());
+  /** 2+ images selected: the prompt bar edits with all of them as references. */
+  const remix = $derived(remixRefs());
+  const remixMode = $derived(remix.length >= 2);
   const toolbarPos = $derived.by(() => {
     if (!sel.length) return null;
     const b = bounds(sel);
@@ -177,7 +180,8 @@
       toast("ComfyUI is not running. Start it from the Comfy Desktop app, then try again.", "error");
       return;
     }
-    if (selImage && editMode) editImage(selImage, prompt, board.settings.count);
+    if (remixMode) remixImages(remix, prompt, board.settings.count);
+    else if (selImage && editMode) editImage(selImage, prompt, board.settings.count);
     else generateFromPrompt(prompt);
     prompt = "";
   }
@@ -342,21 +346,26 @@
         {#if selImage.asset}<span class="thumb-dot"></span>{/if}Editing selected image
         <button class="x" onclick={() => (board.selected = new Set())} aria-label="Clear selection">×</button>
       </div>
+    {:else if remixMode}
+      <div class="chip" title="Your prompt edits using all selected images as references. The numbers on the cards are the order: image 1 sets the output's shape. Shift/Ctrl-click images in the order you want.">
+        Remixing {remix.length} images
+        <button class="x" onclick={() => (board.selected = new Set())} aria-label="Clear selection">×</button>
+      </div>
     {/if}
     <textarea
       id="prompt"
       rows="1"
-      placeholder={editMode ? "Describe the change… (Enter)" : "Describe an image to generate… (Enter)  ·  / to focus"}
+      placeholder={remixMode ? `Combine them, e.g. "put the patch from image 2 on the jacket in image 1" (Enter)` : editMode ? "Describe the change… (Enter)" : "Describe an image to generate… (Enter)  ·  / to focus"}
       bind:value={prompt}
       onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitPrompt(); } if (e.key === "Escape") (e.target as HTMLElement).blur(); }}
     ></textarea>
-    <select bind:value={board.settings.aspect} onchange={() => board.saveSettings()} title="Aspect ratio (text-to-image)" disabled={editMode}>
+    <select bind:value={board.settings.aspect} onchange={() => board.saveSettings()} title="Aspect ratio (text-to-image)" disabled={editMode || remixMode}>
       {#each ["1:1", "4:3", "3:4", "16:9", "9:16"] as a}<option value={a}>{a}</option>{/each}
     </select>
     <select bind:value={board.settings.count} onchange={() => board.saveSettings()} title="How many images">
       {#each [1, 2, 3, 4] as n}<option value={n}>×{n}</option>{/each}
     </select>
-    <button class="btn primary" onclick={submitPrompt} disabled={!prompt.trim()}>{editMode ? "Edit" : "Generate"}</button>
+    <button class="btn primary" onclick={submitPrompt} disabled={!prompt.trim()}>{remixMode ? "Remix" : editMode ? "Edit" : "Generate"}</button>
   </div>
 
   <!-- Zoom controls -->

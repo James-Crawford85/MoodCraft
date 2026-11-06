@@ -4,8 +4,10 @@
   import { assetUrl } from "./api";
   import { retry, cancel, stageLabel } from "./gen.svelte";
 
-  let { card, selected, editing, onStopEdit }: {
+  let { card, selected, editing, onStopEdit, refIndex = 0 }: {
     card: Card; selected: boolean; editing: boolean; onStopEdit: () => void;
+    /** 1-based "image N" number while several images are selected for a remix (0 = none). */
+    refIndex?: number;
   } = $props();
 
   const job = $derived(board.jobs[card.id]);
@@ -88,6 +90,9 @@
   {#if selected}
     <div class="handle" data-resize></div>
   {/if}
+  {#if refIndex}
+    <div class="refnum" title="image {refIndex}" style="transform: scale({1 / Math.max(board.camera.zoom, 0.25)})">{refIndex}</div>
+  {/if}
 </div>
 
 <style>
@@ -168,6 +173,25 @@
     border-radius: 6px;
     padding: 2px 6px;
     outline: none;
+  }
+  .refnum {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    box-sizing: border-box;
+    border-radius: 11px;
+    background: var(--accent-2);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 22px;
+    text-align: center;
+    transform-origin: 0 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
   }
   .handle {
     position: absolute;

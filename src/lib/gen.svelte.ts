@@ -3,6 +3,7 @@
 import { api, listenAll, type StatusEvt } from "./api";
 import { board, randomSeed, bounds } from "./board.svelte";
 import type { GenParams, ImageCard } from "./types";
+import { canEdit } from "./models.svelte";
 
 export const comfyState = $state<{ connected: boolean; url: string; queue?: number; problems: string[]; device?: string; checked: boolean }>({
   connected: false,
@@ -49,6 +50,14 @@ function fail(cardId: string, message: string) {
   board.touch();
 }
 
+/** The selection the app made itself after queueing images. A batch of new
+ *  results shouldn't turn the next prompt into a remix of them; any selection
+ *  the user makes replaces this Set, which re-enables remixing. */
+let autoSelection: Set<string> | null = null;
+function selectGenerated(ids: string[]) {
+  board.selected = autoSelection = new Set(ids);
+}
+
 /** Text → image(s), placed at the viewport center (or right of the selection). */
 export function generateFromPrompt(prompt: string, count = board.settings.count) {
   prompt = prompt.trim();
@@ -66,7 +75,7 @@ export function generateFromPrompt(prompt: string, count = board.settings.count)
     ids.push(card.id);
     start(card);
   }
-  board.selected = new Set(ids);
+  selectGenerated(ids);
 }
 
 /** Output size for edits/variations: the source's aspect at the t2i pixel budget. */
@@ -101,7 +110,38 @@ export function editImage(src: ImageCard, instruction: string, count = 1) {
     ids.push(card.id);
     start(card);
   }
-  board.selected = new Set(ids);
+  selectGenerated(ids);
+}
+
+/** With 2+ ready images selected (and an edit-capable family), the prompt bar
+ *  remixes them. Order = selection order (Shift/Ctrl-click order), so
+ *  "image 1" is the first one picked; the canvas shows these numbers. */
+export function remixRefs(): ImageCard[] {
+  if (board.selected.size < 2 || !canEdit() || board.selected === autoSelection) return [];
+  const imgs = [...board.selected]
+    .map((id) => board.byId(id))
+    .filter((c): c is ImageCard => c?.type === "image" && c.status === "ready" && !!c.asset);
+  return imgs.length >= 2 ? imgs : [];
+}
+
+/** Multi-reference edit: image 1 sets the output's aspect; the rest are extra references. */
+export function remixImages(refs: ImageCard[], instruction: string, count = 1) {
+  if (refs.length < 2 || !instruction.trim()) return;
+  const [first, ...rest] = refs;
+  const b = bounds(refs);
+  board.checkpoint();
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const gen: GenParams = {
+      kind: "edit", prompt: instruction.trim(), seed: randomSeed(), ...sizeLike(first),
+      steps: board.settings.fluxEditSteps, cfg: board.settings.fluxEditCfg,
+      source: first.asset, extraSources: rest.map((r) => r.asset!),
+    };
+    const card = board.addPending(gen, { x: b.x + b.w + 32, y: b.y }, first.id, first.w);
+    ids.push(card.id);
+    start(card);
+  }
+  selectGenerated(ids);
 }
 
 /** Flux img2img variations: same prompt, source as the starting latent. */
@@ -120,7 +160,7 @@ export function variations(src: ImageCard, count = 1) {
     ids.push(card.id);
     start(card);
   }
-  board.selected = new Set(ids);
+  selectGenerated(ids);
 }
 
 /** Re-run a failed card in place (same params, same seed). */

@@ -2,6 +2,7 @@
   import { board, bounds, contains, intersects, type Rect } from "./board.svelte";
   import CardView from "./CardView.svelte";
   import Lightbox from "./Lightbox.svelte";
+  import { remixRefs } from "./gen.svelte";
   import type { Card } from "./types";
 
   let el: HTMLDivElement;
@@ -48,6 +49,9 @@
     };
     return true;
   }
+
+  /** "image N" numbers shown on cards while a multi-image remix is set up. */
+  const refNums = $derived(new Map(remixRefs().map((c, i) => [c.id, i + 1])));
 
   // Frames render first (lowest z), then everything else by z.
   const sorted = $derived([...board.cards].sort((a, b) => (a.type === "frame" ? 0 : 1) - (b.type === "frame" ? 0 : 1) || a.z - b.z));
@@ -318,7 +322,7 @@
 >
   <div class="world" style="transform: translate({board.camera.x}px, {board.camera.y}px) scale({board.camera.zoom});">
     {#each sorted as card (card.id)}
-      <CardView {card} selected={board.selected.has(card.id)} editing={editingId === card.id} onStopEdit={() => { editingId = null; board.touch(); }} />
+      <CardView {card} selected={board.selected.has(card.id)} editing={editingId === card.id} refIndex={refNums.get(card.id) ?? 0} onStopEdit={() => { editingId = null; board.touch(); }} />
     {/each}
     {#if groupBox && !marquee}
       <div class="groupbox" style="transform: translate({groupBox.x}px, {groupBox.y}px); width: {groupBox.w}px; height: {groupBox.h}px; border-width: {1 / board.camera.zoom}px">
