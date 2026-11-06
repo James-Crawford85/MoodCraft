@@ -157,11 +157,14 @@ class Board {
     return card;
   }
 
-  /** Add a frame around the selection, or an empty frame at the viewport center. */
-  addFrame(): FrameCard {
-    const sel = this.selection.filter((c) => c.type !== "frame");
+  /** Add a frame around the selection, or an empty frame at the viewport center.
+   *  With `at`, always an empty frame whose top-left is that board point. */
+  addFrame(at?: { x: number; y: number }): FrameCard {
+    const sel = at ? [] : this.selection.filter((c) => c.type !== "frame");
     let r: Rect;
-    if (sel.length) {
+    if (at) {
+      r = { x: at.x, y: at.y, w: 600, h: 400 };
+    } else if (sel.length) {
       const b = bounds(sel);
       r = { x: b.x - 32, y: b.y - 56, w: b.w + 64, h: b.h + 88 };
     } else {

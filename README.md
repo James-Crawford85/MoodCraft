@@ -26,9 +26,10 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | Variations | Select an image card → **✦ Variations** (Flux img2img with the card's prompt) |
 | Re-roll | Select a generated image → **↻** (same prompt, new seed) |
 | Add images | Drag files from Explorer onto the canvas, or paste with **Ctrl+V** |
-| Note | **N**, or double-click empty canvas. Double-click a note to edit it. |
-| Frame | **F** (wraps the selection). Moving a frame moves the cards inside it. |
-| Pan / zoom | Space-drag, middle-drag or right-drag to pan · mouse wheel zooms · trackpad scroll pans, pinch zooms |
+| Note | **N**, or right-click empty canvas → **Add note** (placed where you clicked). Double-click a note to edit it. |
+| Frame | **F** (wraps the selection), or right-click empty canvas → **Add frame**. Moving a frame moves the cards inside it. |
+| View large | Double-click an image: full-window viewer. **←/→** (or the arrows, or the wheel) step through the board's images in reading order (top to bottom, left to right); **Esc** or a click on the backdrop closes it and selects the last image shown. |
+| Pan / zoom | Space-drag, middle-drag or right-drag to pan (a right-click without dragging opens the menu) · mouse wheel zooms · trackpad scroll pans, pinch zooms |
 | Select | Click, Shift/Ctrl-click, drag a marquee on empty canvas, Ctrl+A |
 | Other | Del delete · Ctrl+D duplicate · Ctrl+Z / Ctrl+Y undo/redo · Ctrl+0 fit · 1 = 100% · G snap to grid |
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { board, contains, intersects, type Rect } from "./board.svelte";
   import CardView from "./CardView.svelte";
+  import Lightbox from "./Lightbox.svelte";
   import type { Card } from "./types";
 
   let el: HTMLDivElement;
@@ -8,6 +9,15 @@
   let marquee = $state<Rect | null>(null);
   let spaceDown = $state(false);
   let panning = $state(false);
+  /** Image card the viewer opened on (null = closed). */
+  let viewing = $state<string | null>(null);
+  /** Right-click menu: screen position (canvas-local) and the board point it was opened at. */
+  let menu = $state<{ sx: number; sy: number; wx: number; wy: number } | null>(null);
+  /** Set when a right-button drag actually panned, so its contextmenu event doesn't open the menu. */
+  let rightPanned = false;
+  /** Element the last press landed on. The canvas captures the pointer on press, so the browser
+   *  fires dblclick/contextmenu at the canvas itself; this says what was really clicked. */
+  let pressTarget: HTMLElement | null = null;
 
   // Frames render first (lowest z), then everything else by z.
   const sorted = $derived([...board.cards].sort((a, b) => (a.type === "frame" ? 0 : 1) - (b.type === "frame" ? 0 : 1) || a.z - b.z));
@@ -28,11 +38,14 @@
   }
 
   function onPointerDown(e: PointerEvent) {
+    if (menu && !(e.target as HTMLElement).closest(".ctxmenu")) menu = null;
     if ((e.target as HTMLElement).closest("[data-action]")) return;
+    pressTarget = e.target as HTMLElement;
     const p = local(e);
     const w = board.screenToWorld(p.x, p.y);
     if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
       drag = { kind: "pan", sx: p.x, sy: p.y, cx: board.camera.x, cy: board.camera.y };
+      if (e.button === 2) rightPanned = false;
       panning = true;
       el.setPointerCapture(e.pointerId);
       e.preventDefault();
@@ -86,8 +99,12 @@
 
   function onPointerMove(e: PointerEvent) {
     if (!drag) return;
+    // No button held: the release never arrived (WebView2 drops pointerup after a right-press
+    // that shows a context menu), so end the drag instead of letting it follow the mouse.
+    if (e.buttons === 0 && e.pointerType === "mouse") { endDrag(e); return; }
     const p = local(e);
     if (drag.kind === "pan") {
+      if (Math.hypot(p.x - drag.sx, p.y - drag.sy) > 4) rightPanned = true;
       board.camera = { ...board.camera, x: drag.cx + p.x - drag.sx, y: drag.cy + p.y - drag.sy };
       return;
     }
@@ -131,16 +148,18 @@
     }
   }
 
-  function onPointerUp(e: PointerEvent) {
+  function endDrag(e?: PointerEvent) {
     if (drag?.kind === "move" && drag.moved) board.touch();
     drag = null;
     marquee = null;
     panning = false;
-    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    if (e && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
   }
+  const onPointerUp = (e: PointerEvent) => endDrag(e);
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    menu = null;
     const p = local(e);
     // Mouse wheels send whole notches with no horizontal component; trackpads
     // send small/fractional deltas (pan) or ctrl+wheel for pinch (zoom).
@@ -154,19 +173,40 @@
   }
 
   function onDblClick(e: MouseEvent) {
-    const t = e.target as HTMLElement;
+    const t = (e.target === el && pressTarget ? pressTarget : e.target) as HTMLElement;
     const cardEl = t.closest("[data-card]") as HTMLElement | null;
-    if (!cardEl) {
-      const p = local(e);
-      const w = board.screenToWorld(p.x, p.y);
-      const n = board.addNote(w.x - 110, w.y - 90);
-      editingId = n.id;
-      return;
-    }
+    if (!cardEl) return;
     const card = board.byId(cardEl.dataset.card!);
     if (!card) return;
+    if (card.type === "image" && card.status === "ready" && card.asset) { viewing = card.id; return; }
     if (card.type === "note") { board.checkpoint(); editingId = card.id; }
     if (card.type === "frame" && t.closest("[data-frame-label]")) { board.checkpoint(); editingId = card.id; }
+  }
+
+  function onContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const t = (e.target === el && pressTarget ? pressTarget : e.target) as HTMLElement;
+    if (drag?.kind === "pan") endDrag();
+    // A right-drag pans; only a plain right-click on empty canvas opens the menu.
+    if (rightPanned || t.closest("[data-card]") || t.closest(".ctxmenu")) { rightPanned = false; return; }
+    const p = local(e);
+    const w = board.screenToWorld(p.x, p.y);
+    const r = el.getBoundingClientRect();
+    // Keep the menu on screen.
+    menu = { sx: Math.min(p.x, r.width - 170), sy: Math.min(p.y, r.height - 90), wx: w.x, wy: w.y };
+  }
+
+  function menuAdd(kind: "note" | "frame") {
+    if (!menu) return;
+    const { wx, wy } = menu;
+    menu = null;
+    if (kind === "note") editingId = board.addNote(wx, wy).id;
+    else board.addFrame({ x: wx, y: wy });
+  }
+
+  function closeViewer(lastId: string) {
+    viewing = null;
+    if (board.byId(lastId)) board.selected = new Set([lastId]);
   }
 
   export function editCard(id: string) {
@@ -174,6 +214,7 @@
   }
 
   function onKey(e: KeyboardEvent, down: boolean) {
+    if (down && menu && e.key === "Escape") { menu = null; return; }
     if (e.code === "Space" && !isTyping(e)) {
       spaceDown = down;
       if (down) e.preventDefault();
@@ -203,7 +244,7 @@
   onpointercancel={onPointerUp}
   onwheel={onWheel}
   ondblclick={onDblClick}
-  oncontextmenu={(e) => e.preventDefault()}
+  oncontextmenu={onContextMenu}
 >
   <div class="world" style="transform: translate({board.camera.x}px, {board.camera.y}px) scale({board.camera.zoom});">
     {#each sorted as card (card.id)}
@@ -213,14 +254,24 @@
       <div class="marquee" style="transform: translate({marquee.x}px, {marquee.y}px); width: {marquee.w}px; height: {marquee.h}px; border-width: {1 / board.camera.zoom}px"></div>
     {/if}
   </div>
+  {#if menu}
+    <div class="ctxmenu" data-action role="menu" style="left: {menu.sx}px; top: {menu.sy}px;">
+      <button role="menuitem" onclick={() => menuAdd("note")}>Add note <kbd>N</kbd></button>
+      <button role="menuitem" onclick={() => menuAdd("frame")}>Add frame <kbd>F</kbd></button>
+    </div>
+  {/if}
   {#if board.cards.length === 0}
     <div class="empty-hint">
       <h2>Start your board</h2>
-      <p>Type a prompt below to generate an image, drop image files here, or double-click to add a note.</p>
+      <p>Type a prompt below to generate an image, drop image files here, or right-click to add a note or frame.</p>
       <p class="keys"><kbd>Space</kbd>/<kbd>Middle</kbd> drag to pan · <kbd>Wheel</kbd> zoom · <kbd>N</kbd> note · <kbd>F</kbd> frame</p>
     </div>
   {/if}
 </div>
+
+{#if viewing}
+  <Lightbox startId={viewing} onClose={closeViewer} />
+{/if}
 
 <style>
   .canvas {
@@ -253,6 +304,38 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     z-index: 100000;
     pointer-events: none;
+  }
+  .ctxmenu {
+    position: absolute;
+    z-index: 200000;
+    min-width: 160px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  }
+  .ctxmenu button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    padding: 7px 10px;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+  }
+  .ctxmenu button:hover,
+  .ctxmenu button:focus-visible {
+    background: var(--surface-2);
+    outline: none;
   }
   .empty-hint {
     position: absolute;
