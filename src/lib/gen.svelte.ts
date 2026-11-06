@@ -25,10 +25,17 @@ function t2iSize(): { width: number; height: number } {
   return { width: snap(w), height: snap((w * b) / a) };
 }
 
-function start(card: ImageCard) {
+function start(card: ImageCard, resumePromptId?: string) {
   if (!card.gen) return;
-  board.jobs[card.id] = { stage: "starting" };
-  api.generate(card.id, board.dir, card.gen).catch((e) => fail(card.id, String(e)));
+  board.jobs[card.id] = { stage: resumePromptId ? "queued" : "starting" };
+  api.generate(card.id, board.dir, card.gen, resumePromptId).catch((e) => fail(card.id, String(e)));
+}
+
+/** After opening a board: re-attach pending cards to their ComfyUI prompts. */
+export function resumePending() {
+  for (const c of board.cards) {
+    if (c.type === "image" && c.status === "pending" && c.promptId && !board.jobs[c.id]) start(c, c.promptId);
+  }
 }
 
 function fail(cardId: string, message: string) {
@@ -36,6 +43,7 @@ function fail(cardId: string, message: string) {
   if (c?.type === "image") {
     c.status = "error";
     c.error = message;
+    c.promptId = undefined;
   }
   delete board.jobs[cardId];
   board.touch();
@@ -88,6 +96,7 @@ export function retry(card: ImageCard) {
   if (!card.gen) return;
   card.status = "pending";
   card.error = undefined;
+  card.promptId = undefined;
   board.touch();
   start(card);
 }
@@ -129,6 +138,10 @@ export async function initGenEvents() {
       const j = board.jobs[e.cardId] ?? (board.jobs[e.cardId] = { stage: e.stage });
       j.stage = e.stage;
       if (e.stage === "sampling") { j.value = e.value; j.max = e.max; }
+      if (e.promptId) {
+        const c = board.byId(e.cardId);
+        if (c?.type === "image" && c.promptId !== e.promptId) { c.promptId = e.promptId; board.touch(); }
+      }
     },
     preview: (e) => {
       const j = board.jobs[e.cardId];
@@ -141,6 +154,7 @@ export async function initGenEvents() {
       c.asset = e.asset;
       c.status = "ready";
       c.error = undefined;
+      c.promptId = undefined;
       c.naturalW = e.width;
       c.naturalH = e.height;
       c.h = Math.round((c.w * e.height) / e.width);
@@ -150,7 +164,7 @@ export async function initGenEvents() {
       if (e.cancelled) {
         const c = board.byId(e.cardId);
         delete board.jobs[e.cardId];
-        if (c?.type === "image") { c.status = "error"; c.error = "Cancelled"; board.touch(); }
+        if (c?.type === "image") { c.status = "error"; c.error = "Cancelled"; c.promptId = undefined; board.touch(); }
         return;
       }
       fail(e.cardId, e.message);

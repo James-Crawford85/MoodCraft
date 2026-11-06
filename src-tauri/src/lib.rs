@@ -66,6 +66,11 @@ async fn comfy_set_url(url: String, state: State<'_, AppState>) -> Result<(), St
 #[tauri::command]
 async fn generate(app: AppHandle, req: GenRequest, state: State<'_, AppState>) -> Result<(), String> {
     let comfy = state.comfy.clone();
+    // A webview reload re-requests pending cards; if this process is still
+    // tracking the job, the running task will deliver the result.
+    if req.resume_prompt_id.is_some() && comfy.jobs.read().await.contains_key(&req.card_id) {
+        return Ok(());
+    }
     let ov = override_dir(&app);
     tauri::async_runtime::spawn(comfy::run_job(sink(&app), comfy, req, ov));
     Ok(())

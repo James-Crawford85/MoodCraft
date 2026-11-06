@@ -247,8 +247,10 @@ class Board {
     if (json) {
       const f = JSON.parse(json) as BoardFile;
       if (f.app !== "BoardCreate") throw new Error("Not a BoardCreate board.json");
+      // Pending cards with a ComfyUI prompt id are re-attached by gen.resumePending();
+      // ones that never reached the queue can only be retried.
       this.cards = (f.cards ?? []).map((c) =>
-        c.type === "image" && c.status === "pending"
+        c.type === "image" && c.status === "pending" && !c.promptId
           ? { ...c, status: "error", error: "Generation was interrupted (app closed). Retry?" }
           : c,
       );

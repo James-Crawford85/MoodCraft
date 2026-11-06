@@ -35,6 +35,7 @@ async fn main() {
             cfg: if kind == "t2i" { 3.5 } else { 4.0 },
             source: source.clone(),
             board_dir: dir.clone(),
+            resume_prompt_id: None,
         };
         let mut req = req;
         if kind == "edit" { req.prompt = "Create a variation of this image at night with glowing lanterns".into(); }

@@ -6,7 +6,7 @@
   import Canvas from "$lib/Canvas.svelte";
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
-  import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll } from "$lib/gen.svelte";
+  import { comfyState, editImage, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
 
   let canvas: Canvas;
@@ -90,6 +90,7 @@
     try {
       const json = await api.boardOpen(dir);
       board.load(dir, json, false);
+      resumePending();
       remember(dir, false);
       toast(`Opened ${board.name}`);
     } catch (e) {
@@ -220,6 +221,7 @@
       if (last?.dir) {
         try {
           board.load(last.dir, await api.boardOpen(last.dir), last.scratch);
+          resumePending();
           opened = true;
         } catch { /* folder moved or deleted */ }
       }

@@ -250,6 +250,10 @@ pub struct GenRequest {
     /// Board-relative asset path of the source image (edit only).
     pub source: Option<String>,
     pub board_dir: String,
+    /// Re-attach to a prompt queued earlier (e.g. before an app restart)
+    /// instead of queueing a new one.
+    #[serde(default)]
+    pub resume_prompt_id: Option<String>,
 }
 fn d_size() -> u32 {
     768
@@ -263,6 +267,7 @@ struct ProgressPayload {
     value: Option<u64>,
     max: Option<u64>,
     node: Option<String>,
+    prompt_id: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -325,7 +330,7 @@ fn is_oom(msg: &str) -> bool {
 }
 
 fn progress(app: &Sink, card_id: &str, stage: &'static str, value: Option<u64>, max: Option<u64>, node: Option<String>) {
-    let _ = app.emit("gen://progress", ProgressPayload { card_id: card_id.to_string(), stage, value, max, node });
+    let _ = app.emit("gen://progress", ProgressPayload { card_id: card_id.to_string(), stage, value, max, node, prompt_id: None });
 }
 
 async fn run_job_inner(
@@ -337,35 +342,21 @@ async fn run_job_inner(
     let e = |m: String| (m, false);
     let board_dir = PathBuf::from(&req.board_dir);
 
-    progress(app, &req.card_id, "preparing", None, None, None);
-
-    let mut vars: HashMap<&str, Value> = HashMap::new();
-    vars.insert("prompt", json!(req.prompt));
-    vars.insert("negative", json!(req.negative));
-    vars.insert("seed", json!(req.seed));
-    vars.insert("width", json!(req.width.clamp(64, 2048) / 16 * 16));
-    vars.insert("height", json!(req.height.clamp(64, 2048) / 16 * 16));
-    vars.insert("steps", json!(req.steps.clamp(1, 150)));
-    vars.insert("cfg", json!(req.cfg));
-
-    let mut workflow = match req.kind.as_str() {
-        "t2i" => load_template(override_dir, "t2i.json", T2I_TEMPLATE).map_err(e)?,
-        "edit" => {
-            let src = req.source.as_ref().ok_or_else(|| e("Edit needs a source image".into()))?;
-            let src_path = crate::board::resolve_asset(&board_dir, src).map_err(e)?;
-            let name = upload_image(comfy, &src_path).await.map_err(e)?;
-            vars.insert("image", json!(name));
-            load_template(override_dir, "edit.json", EDIT_TEMPLATE).map_err(e)?
-        }
-        other => return Err(e(format!("Unknown generation kind '{other}'"))),
-    };
-    substitute(&mut workflow, &vars);
-
     // Subscribe before queueing so no event can slip past us.
     let mut rx = comfy.events.subscribe();
-    let prompt_id = queue_prompt(comfy, &workflow).await.map_err(e)?;
+    let prompt_id = match &req.resume_prompt_id {
+        Some(pid) => {
+            if !prompt_known(comfy, pid).await {
+                return Err(e("This job is no longer known to ComfyUI (server restarted?). Retry?".into()));
+            }
+            pid.clone()
+        }
+        None => queue_new(app, comfy, req, override_dir, &board_dir).await.map_err(e)?,
+    };
     comfy.jobs.write().await.insert(req.card_id.clone(), prompt_id.clone());
-    progress(app, &req.card_id, "queued", None, None, None);
+    let _ = app.emit("gen://progress", ProgressPayload {
+        card_id: req.card_id.clone(), stage: "queued", value: None, max: None, node: None, prompt_id: Some(prompt_id.clone()),
+    });
 
     let outcome = wait_for(app, comfy, &mut rx, &req.card_id, &prompt_id).await;
     match outcome {
@@ -381,6 +372,52 @@ async fn run_job_inner(
     let bytes = fetch_view(comfy, &img).await.map_err(e)?;
     let (asset, w, h) = crate::board::write_asset(&board_dir, &bytes, "png").map_err(e)?;
     Ok(DonePayload { card_id: req.card_id.clone(), asset, width: w, height: h, seed: req.seed })
+}
+
+/// Is this prompt still pending/running, or already in history?
+async fn prompt_known(comfy: &Comfy, pid: &str) -> bool {
+    if let Ok(h) = comfy.get_json(&format!("/history/{pid}")).await {
+        if !h[pid].is_null() {
+            return true;
+        }
+    }
+    if let Ok(q) = comfy.get_json("/queue").await {
+        for key in ["queue_running", "queue_pending"] {
+            if q[key].as_array().into_iter().flatten().any(|item| item[1] == pid) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Build the workflow from its template, upload any source image, queue it.
+async fn queue_new(app: &Sink, comfy: &Comfy, req: &GenRequest, override_dir: Option<&Path>, board_dir: &Path) -> Result<String, String> {
+    let e = |m: String| m;
+    progress(app, &req.card_id, "preparing", None, None, None);
+
+    let mut vars: HashMap<&str, Value> = HashMap::new();
+    vars.insert("prompt", json!(req.prompt));
+    vars.insert("negative", json!(req.negative));
+    vars.insert("seed", json!(req.seed));
+    vars.insert("width", json!(req.width.clamp(64, 2048) / 16 * 16));
+    vars.insert("height", json!(req.height.clamp(64, 2048) / 16 * 16));
+    vars.insert("steps", json!(req.steps.clamp(1, 150)));
+    vars.insert("cfg", json!(req.cfg));
+
+    let mut workflow = match req.kind.as_str() {
+        "t2i" => load_template(override_dir, "t2i.json", T2I_TEMPLATE).map_err(e)?,
+        "edit" => {
+            let src = req.source.as_ref().ok_or_else(|| e("Edit needs a source image".into()))?;
+            let src_path = crate::board::resolve_asset(board_dir, src).map_err(e)?;
+            let name = upload_image(comfy, &src_path).await.map_err(e)?;
+            vars.insert("image", json!(name));
+            load_template(override_dir, "edit.json", EDIT_TEMPLATE).map_err(e)?
+        }
+        other => return Err(e(format!("Unknown generation kind '{other}'"))),
+    };
+    substitute(&mut workflow, &vars);
+    queue_prompt(comfy, &workflow).await
 }
 
 async fn upload_image(comfy: &Comfy, path: &Path) -> Result<String, String> {

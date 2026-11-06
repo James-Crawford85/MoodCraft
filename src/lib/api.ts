@@ -19,8 +19,8 @@ export const api = {
   comfyCheck: () => invoke<CheckReport>("comfy_check"),
   comfyStatus: () => invoke<[boolean, string]>("comfy_status"),
   comfySetUrl: (url: string) => invoke<void>("comfy_set_url", { url }),
-  generate: (cardId: string, boardDir: string, p: GenParams) =>
-    invoke<void>("generate", { req: { cardId, boardDir, ...p, negative: "" } }),
+  generate: (cardId: string, boardDir: string, p: GenParams, resumePromptId?: string) =>
+    invoke<void>("generate", { req: { cardId, boardDir, ...p, negative: "", resumePromptId } }),
   cancel: (cardId: string) => invoke<void>("cancel_generation", { cardId }),
   boardNew: () => invoke<string>("board_new"),
   boardOpen: (dir: string) => invoke<string>("board_open", { dir }),
@@ -38,7 +38,7 @@ export function assetUrl(boardDir: string, asset: string): string {
   return convertFileSrc(boardDir + sep + asset.replaceAll("/", sep));
 }
 
-export interface ProgressEvt { cardId: string; stage: string; value?: number; max?: number; node?: string }
+export interface ProgressEvt { cardId: string; stage: string; value?: number; max?: number; node?: string; promptId?: string }
 export interface PreviewEvt { cardId: string; dataUrl: string }
 export interface DoneEvt { cardId: string; asset: string; width: number; height: number; seed: number }
 export interface ErrorEvt { cardId: string; message: string; oom: boolean; cancelled: boolean }

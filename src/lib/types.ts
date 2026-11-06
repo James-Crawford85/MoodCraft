@@ -33,6 +33,8 @@ export interface ImageCard extends BaseCard {
   gen?: GenParams;
   /** Card this image was derived from (variation / edit). */
   parentId?: string;
+  /** ComfyUI prompt id while queued/running, so a reload can re-attach. */
+  promptId?: string;
   /** Natural pixel size of the asset. */
   naturalW?: number;
   naturalH?: number;
