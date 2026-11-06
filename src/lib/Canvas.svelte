@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { board, contains, intersects, type Rect } from "./board.svelte";
+  import { board, bounds, contains, intersects, type Rect } from "./board.svelte";
   import CardView from "./CardView.svelte";
   import Lightbox from "./Lightbox.svelte";
   import type { Card } from "./types";
@@ -19,6 +19,36 @@
    *  fires dblclick/contextmenu at the canvas itself; this says what was really clicked. */
   let pressTarget: HTMLElement | null = null;
 
+  /** Cards a group operation acts on: the selection plus anything inside a selected frame. */
+  function groupItems(): Card[] {
+    const out = new Map<string, Card>();
+    for (const c of board.selection) {
+      out.set(c.id, c);
+      if (c.type === "frame") {
+        for (const o of board.cards) if (o.id !== c.id && o.type !== "frame" && contains(c, o)) out.set(o.id, o);
+      }
+    }
+    return [...out.values()];
+  }
+
+  /** Bounding box shown (with its own handle) when more than one item is selected. */
+  const groupBox = $derived(board.selected.size > 1 ? bounds(board.selection) : null);
+
+  /** Start scaling the whole selection about its top-left; (cornerX, cornerY) is the dragged corner. */
+  function startGroupResize(cornerX: number, cornerY: number) {
+    const items = groupItems();
+    const b = bounds(items);
+    const vx = cornerX - b.x, vy = cornerY - b.y;
+    if (vx * vx + vy * vy < 1) return false;
+    // Don't let any item shrink below 40 units on its short side (or below its current size if it's already smaller).
+    const minScale = Math.max(...items.map((c) => Math.min(1, 40 / Math.max(1, Math.min(c.w, c.h)))));
+    drag = {
+      kind: "group-resize", moved: false, ax: b.x, ay: b.y, vx, vy, minScale,
+      items: items.map((c) => ({ c, x: c.x, y: c.y, w: c.w, h: c.h })),
+    };
+    return true;
+  }
+
   // Frames render first (lowest z), then everything else by z.
   const sorted = $derived([...board.cards].sort((a, b) => (a.type === "frame" ? 0 : 1) - (b.type === "frame" ? 0 : 1) || a.z - b.z));
 
@@ -26,7 +56,16 @@
     | { kind: "pan"; sx: number; sy: number; cx: number; cy: number }
     | { kind: "marquee"; wx: number; wy: number; additive: boolean; base: Set<string> }
     | { kind: "move"; wx: number; wy: number; items: { c: Card; x: number; y: number }[]; anchor: Card; moved: boolean }
-    | { kind: "resize"; c: Card; wx: number; wy: number; w: number; h: number; moved: boolean };
+    | { kind: "resize"; c: Card; wx: number; wy: number; w: number; h: number; moved: boolean }
+    | {
+        kind: "group-resize"; moved: boolean;
+        /** Fixed point: the top-left of the selection's bounding box (opposite the handles). */
+        ax: number; ay: number;
+        /** Dragged corner relative to the anchor at the start; the scale follows the pointer's projection onto it. */
+        vx: number; vy: number;
+        minScale: number;
+        items: { c: Card; x: number; y: number; w: number; h: number }[];
+      };
   let drag: Drag | null = null;
 
   const GRID = 16;
@@ -57,6 +96,11 @@
     const cardEl = (e.target as HTMLElement).closest("[data-card]") as HTMLElement | null;
     const card = cardEl ? board.byId(cardEl.dataset.card!) : undefined;
 
+    if (!card && groupBox && (e.target as HTMLElement).closest("[data-group-resize]")) {
+      if (startGroupResize(groupBox.x + groupBox.w, groupBox.y + groupBox.h)) el.setPointerCapture(e.pointerId);
+      return;
+    }
+
     if (!card) {
       const base = e.shiftKey || e.ctrlKey ? new Set(board.selected) : new Set<string>();
       board.selected = base;
@@ -67,6 +111,11 @@
     }
 
     if ((e.target as HTMLElement).closest("[data-resize]")) {
+      // Resizing one item of a multi-selection scales the whole selection with it.
+      if (board.selected.size > 1 && board.selected.has(card.id)) {
+        if (startGroupResize(card.x + card.w, card.y + card.h)) el.setPointerCapture(e.pointerId);
+        return;
+      }
       drag = { kind: "resize", c: card, wx: w.x, wy: w.y, w: card.w, h: card.h, moved: false };
       el.setPointerCapture(e.pointerId);
       return;
@@ -145,11 +194,32 @@
         c.w = nw;
         c.h = Math.max(60, snap(drag.h + (w.y - drag.wy)));
       }
+    } else if (drag.kind === "group-resize") {
+      const qx = w.x - drag.ax, qy = w.y - drag.ay;
+      let k = (qx * drag.vx + qy * drag.vy) / (drag.vx * drag.vx + drag.vy * drag.vy);
+      if (!drag.moved) {
+        if (Math.abs(k - 1) * Math.hypot(drag.vx, drag.vy) * board.camera.zoom < 3) return;
+        board.checkpoint(); // one undo step for the whole group resize
+        drag.moved = true;
+      }
+      k = Math.max(drag.minScale, k);
+      for (const i of drag.items) {
+        i.c.x = drag.ax + (i.x - drag.ax) * k;
+        i.c.y = drag.ay + (i.y - drag.ay) * k;
+        i.c.w = i.w * k;
+        i.c.h = i.h * k;
+      }
     }
   }
 
   function endDrag(e?: PointerEvent) {
-    if (drag?.kind === "move" && drag.moved) board.touch();
+    if ((drag?.kind === "move" || drag?.kind === "group-resize") && drag.moved) {
+      if (drag.kind === "group-resize") for (const i of drag.items) {
+        const c = i.c;
+        c.x = Math.round(c.x); c.y = Math.round(c.y); c.w = Math.round(c.w); c.h = Math.round(c.h);
+      }
+      board.touch();
+    }
     drag = null;
     marquee = null;
     panning = false;
@@ -250,6 +320,11 @@
     {#each sorted as card (card.id)}
       <CardView {card} selected={board.selected.has(card.id)} editing={editingId === card.id} onStopEdit={() => { editingId = null; board.touch(); }} />
     {/each}
+    {#if groupBox && !marquee}
+      <div class="groupbox" style="transform: translate({groupBox.x}px, {groupBox.y}px); width: {groupBox.w}px; height: {groupBox.h}px; border-width: {1 / board.camera.zoom}px">
+        <div class="ghandle" data-group-resize title="Drag to resize the selection together" style="width: {16 / board.camera.zoom}px; height: {16 / board.camera.zoom}px; right: {-9 / board.camera.zoom}px; bottom: {-9 / board.camera.zoom}px; border-width: {2 / board.camera.zoom}px; border-radius: {4 / board.camera.zoom}px"></div>
+      </div>
+    {/if}
     {#if marquee}
       <div class="marquee" style="transform: translate({marquee.x}px, {marquee.y}px); width: {marquee.w}px; height: {marquee.h}px; border-width: {1 / board.camera.zoom}px"></div>
     {/if}
@@ -295,6 +370,24 @@
     top: 0;
     transform-origin: 0 0;
     will-change: transform;
+  }
+  .groupbox {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+    z-index: 99999;
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  .ghandle {
+    position: absolute;
+    background: var(--bg);
+    border-style: solid;
+    border-color: var(--accent);
+    box-sizing: border-box;
+    cursor: nwse-resize;
+    pointer-events: auto;
   }
   .marquee {
     position: absolute;

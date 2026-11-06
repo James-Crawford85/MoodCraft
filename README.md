@@ -31,6 +31,7 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | View large | Double-click an image: full-window viewer. **←/→** (or the arrows, or the wheel) step through the board's images in reading order (top to bottom, left to right); **Esc** or a click on the backdrop closes it and selects the last image shown. |
 | Pan / zoom | Space-drag, middle-drag or right-drag to pan (a right-click without dragging opens the menu) · mouse wheel zooms · trackpad scroll pans, pinch zooms |
 | Select | Click, Shift/Ctrl-click, drag a marquee on empty canvas, Ctrl+A |
+| Resize | Drag the corner handle of a selected card (images keep their aspect ratio). With several items selected, dragging any of their handles, or the handle of the dashed selection box, scales the whole group together about its top-left corner, so the arrangement keeps its shape. One Ctrl+Z undoes it. |
 | Other | Del delete · Ctrl+D duplicate · Ctrl+Z / Ctrl+Y undo/redo · Ctrl+0 fit · 1 = 100% · G snap to grid |
 
 **Free GPU** (top bar) asks ComfyUI to unload its models so Blender or other
