@@ -90,6 +90,8 @@ export interface Settings {
   /** img2img denoise for Variations: higher = further from the source. */
   variationStrength: number;
   count: number;
+  /** "More like this": how many variations to fan around the image. */
+  moreCount: number;
   snap: boolean;
 }
 

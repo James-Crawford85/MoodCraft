@@ -6,7 +6,7 @@
   import Canvas from "$lib/Canvas.svelte";
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
-  import { comfyState, editImage, remixImages, remixRefs, scatterFromPrompt, SCATTER_COUNTS, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending, variations } from "$lib/gen.svelte";
+  import { comfyState, editImage, moreLikeThis, remixImages, remixRefs, scatterFromPrompt, SCATTER_COUNTS, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending } from "$lib/gen.svelte";
   import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
@@ -14,6 +14,9 @@
   let canvas: Canvas;
   let prompt = $state("");
   let editPrompt = $state("");
+  let showMore = $state(false);
+  // Close the "More like this" options when the selection changes.
+  $effect(() => { void board.selected; showMore = false; });
   let showSettings = $state(false);
   let toasts = $state<{ id: number; text: string; kind: "info" | "error" }[]>([]);
   let dropping = $state(false);
@@ -34,13 +37,16 @@
   /** 2+ images selected: the prompt bar edits with all of them as references. */
   const remix = $derived(remixRefs());
   const remixMode = $derived(remix.length >= 2);
+  let toolbarW = $state(320);
   const toolbarPos = $derived.by(() => {
     if (!sel.length) return null;
     const b = bounds(sel);
     const z = board.camera.zoom;
     const x = board.camera.x + (b.x + b.w / 2) * z;
     const y = board.camera.y + b.y * z;
-    return { x: Math.max(160, Math.min(window.innerWidth - 160, x)), y: Math.max(64, y - 14) };
+    // Keep the whole toolbar (it's centred on x) on screen.
+    const half = toolbarW / 2 + 8;
+    return { x: Math.max(half, Math.min(window.innerWidth - half, x)), y: Math.max(64, y - 14) };
   });
 
   // --- persistence -----------------------------------------------------------
@@ -312,9 +318,29 @@
 
   <!-- Contextual toolbar for the selection -->
   {#if toolbarPos && sel.length}
-    <div class="ctx" style="left:{toolbarPos.x}px; top:{toolbarPos.y}px;" data-action>
+    <div class="ctx" style="left:{toolbarPos.x}px; top:{toolbarPos.y}px;" data-action bind:offsetWidth={toolbarW}>
       {#if selImage}
-        <button class="btn" disabled={!comfyState.connected || !canVary()} onclick={() => variations(selImage, board.settings.count)} title={canVary() ? "Variations: same prompt, new composition (strength in ⚙)" : `${activeFamily()?.label} doesn't support variations`}>✦ Variations</button>
+        <div class="split">
+          <button class="btn" disabled={!comfyState.connected || !canVary()} onclick={() => { moreLikeThis(selImage); showMore = false; }}
+            title={canVary() ? `${board.settings.moreCount} variations around this image (strength ${board.settings.variationStrength}). Options: ▾` : `${activeFamily()?.label} doesn't support variations`}>✦ More like this</button>
+          <button class="btn caret" class:on={showMore} onclick={() => (showMore = !showMore)} aria-label="More like this options" title="Options">▾</button>
+          {#if showMore}
+            <div class="morepanel" role="dialog" aria-label="More like this options">
+              <label class="row">How many
+                <select bind:value={board.settings.moreCount} onchange={() => board.saveSettings()}>
+                  {#each [2, 3, 4, 5, 6, 8] as n}<option value={n}>{n}</option>{/each}
+                </select>
+              </label>
+              <label class="row strength">
+                <span>Subtle</span>
+                <input type="range" min="0.3" max="0.95" step="0.05" bind:value={board.settings.variationStrength} onchange={() => board.saveSettings()} title="Strength {board.settings.variationStrength}" />
+                <span>Loose</span>
+              </label>
+              <p class="hint">Same prompt, new seeds, starting from this image. Subtle keeps the composition; loose only keeps the overall idea.</p>
+              <button class="btn primary" disabled={!comfyState.connected || !canVary()} onclick={() => { moreLikeThis(selImage); showMore = false; }}>Make {board.settings.moreCount}</button>
+            </div>
+          {/if}
+        </div>
         {#if canEdit()}
         <form class="inline" onsubmit={(e) => { e.preventDefault(); if (editPrompt.trim()) { editImage(selImage, editPrompt); editPrompt = ""; } }}>
           <input placeholder="Edit: e.g. make it night time" bind:value={editPrompt} onkeydown={(e) => e.stopPropagation()} />
@@ -605,6 +631,69 @@
   .inline {
     display: flex;
     gap: 4px;
+  }
+  .split {
+    position: relative;
+    display: flex;
+    gap: 1px;
+  }
+  .split > .btn:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .split .caret {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+  .split .caret.on {
+    background: var(--surface-2);
+  }
+  .morepanel {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+    color: var(--text);
+  }
+  .morepanel .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .morepanel .strength span {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .morepanel .strength input {
+    flex: 1;
+    width: auto;
+    padding: 0;
+    accent-color: var(--accent);
+  }
+  .morepanel select {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 6px;
+  }
+  .morepanel .hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
   }
   .ctx input,
   .settings input {

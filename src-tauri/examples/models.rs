@@ -40,7 +40,7 @@ async fn main() {
             card_id: kind.into(), kind: kind.into(),
             prompt: "concept art of a small mossy stone shrine in a misty forest, soft light".into(),
             negative: String::new(), seed: 7, width: 1024, height: 1024, steps: 25, cfg: 6.5,
-            source: source.clone(), board_dir: dir.clone(), resume_prompt_id: None, denoise: Some(0.6),
+            source: source.clone(), board_dir: dir.clone(), resume_prompt_id: None, denoise: Some(0.6), extra_sources: vec![],
         };
         let t = Instant::now();
         tokio::spawn(comfy::run_job(sink.clone(), c.clone(), req));

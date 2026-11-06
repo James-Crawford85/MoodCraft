@@ -1,7 +1,7 @@
 // Generation controller: turns UI intents into pending cards + backend jobs,
 // and applies backend events back onto the board.
 import { api, listenAll, type StatusEvt } from "./api";
-import { board, randomSeed, bounds } from "./board.svelte";
+import { board, randomSeed, bounds, contains } from "./board.svelte";
 import type { GenParams, ImageCard } from "./types";
 import { canEdit } from "./models.svelte";
 
@@ -118,7 +118,7 @@ export function scatterFromPrompt(prompt: string, n: number) {
   const want = sel.length
     ? (() => { const b = bounds(sel); return { x: b.x + b.w + 48, y: b.y }; })()
     : (() => { const c = board.viewportCenter(); return { x: c.x - fw / 2, y: c.y - fh / 2 }; })();
-  const at = board.freeSpot(want.x, want.y, fw, fh);
+  const at = board.freeSpot(want.x, want.y, fw, fh, undefined, board.cards.filter((c) => c.type === "frame"));
   board.checkpoint();
   const label = prompt.length > 80 ? prompt.slice(0, 77) + "…" : prompt;
   const frame = board.addFrameRect({ x: at.x, y: at.y, w: fw, h: fh }, `Scatter: ${label}`);
@@ -210,6 +210,40 @@ export function variations(src: ImageCard, count = 1) {
       denoise: board.settings.variationStrength,
     };
     const card = board.addPending(gen, { x: src.x + src.w + 32, y: src.y }, src.id, src.w);
+    ids.push(card.id);
+    start(card);
+  }
+  selectGenerated(ids);
+}
+
+// --- More like this ------------------------------------------------------------
+/** Slots around a card, nearest first: right, below, left, above, then the diagonals. */
+function fanSlots(src: ImageCard, w: number, h: number) {
+  const g = 32;
+  const R = src.x + src.w + g, L = src.x - w - g, B = src.y + src.h + g, T = src.y - h - g;
+  return [[R, src.y], [src.x, B], [L, src.y], [src.x, T], [R, B], [L, B], [R, T], [L, T]].map(([x, y]) => ({ x, y }));
+}
+
+/** N img2img variations fanned around the source, which stays put. Strength
+ *  is the variation strength (subtle 0.3 … loose 0.95).
+ *  (A "keep identity" mode via Flux Klein reference edit was tried: asking for
+ *  a different pose/angle returned near-copies at CFG 1–4, so it isn't offered.) */
+export function moreLikeThis(src: ImageCard, n = board.settings.moreCount) {
+  if (!src.asset) return;
+  n = Math.max(1, Math.min(8, n));
+  const size = sizeLike(src);
+  const w = src.w, h = Math.round((w * size.height) / size.width);
+  const slots = fanSlots(src, w, h);
+  // Don't drop new takes into some other frame (they'd travel with it).
+  const otherFrames = board.cards.filter((c) => c.type === "frame" && !contains(c, src));
+  const prompt = describingPrompt(src) ?? "high quality image, same subject, style and color palette";
+  board.checkpoint();
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const gen: GenParams = { kind: "variation", prompt, seed: randomSeed(), ...size, steps: board.settings.t2iSteps,
+      cfg: board.settings.t2iCfg, source: src.asset, denoise: board.settings.variationStrength };
+    const s = slots[i % slots.length];
+    const card = board.addPending(gen, board.freeSpot(s.x, s.y, w, h, undefined, otherFrames), src.id, w, true);
     ids.push(card.id);
     start(card);
   }

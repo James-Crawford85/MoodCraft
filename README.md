@@ -25,7 +25,7 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | Scatter | Pick **Scatter ×8** or **×12** in the count menu, type a prompt: that many different takes (each adds its own lighting, camera angle, palette, medium and mood words, plus a new seed), laid out in a grid inside a new frame titled with the prompt. Each card's full prompt is on the card (**Prompt** button). Edits and remixes make at most 4. |
 | Edit an image | Select an image card, then type the change in the prompt bar, or use **Edit** in the floating toolbar (Flux Klein reference edit) |
 | Remix several images | Shift/Ctrl-click 2+ images (the click order numbers them; badges show **1**, **2**, …), then type in the prompt bar, e.g. "put the patch from image 2 on the jacket in image 1". Flux Klein feeds every image to `ReferenceMultiLatent`; image 1 sets the output shape. Results land right of the selection. (Not available with the Checkpoint family.) Right after a generation the new cards are selected but don't trigger a remix; select images yourself to remix them. |
-| Variations | Select an image card → **✦ Variations** (Flux img2img with the card's prompt) |
+| More like this | Select an image → **✦ More like this**: new img2img variations (same prompt, new seeds) fanned around the original (right, below, left, above, then the diagonals); the original doesn't move. **▾** sets how many (default 4) and the strength from subtle (keeps the composition) to loose (keeps only the idea). |
 | Re-roll | Select a generated image → **↻** (same prompt, new seed) |
 | Add images | Drag files from Explorer onto the canvas, or paste with **Ctrl+V** |
 | Note | **N**, or right-click empty canvas → **Add note** (placed where you clicked). Double-click a note to edit it. |

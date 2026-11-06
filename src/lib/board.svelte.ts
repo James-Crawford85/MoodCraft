@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: Settings = {
   fluxEditCfg: 1,
   variationStrength: 0.7,
   count: 1,
+  moreCount: 4,
   snap: false,
 };
 
@@ -126,10 +127,11 @@ class Board {
   }
 
   // --- placement -------------------------------------------------------------
-  /** Find a free spot of size w×h near (x,y), scanning right then down. */
-  freeSpot(x: number, y: number, w: number, h: number, ignore: Set<string> = new Set()): { x: number; y: number } {
+  /** Find a free spot of size w×h near (x,y), scanning right then down.
+   *  Frames don't block (new cards may land inside one) unless listed in `frames`. */
+  freeSpot(x: number, y: number, w: number, h: number, ignore: Set<string> = new Set(), frames: Card[] = []): { x: number; y: number } {
     const gap = 24;
-    const blockers = this.cards.filter((c) => c.type !== "frame" && !ignore.has(c.id));
+    const blockers = [...this.cards.filter((c) => c.type !== "frame" && !ignore.has(c.id)), ...frames];
     let cx = x, cy = y;
     for (let row = 0; row < 40; row++) {
       for (let i = 0; i < 40; i++) {
