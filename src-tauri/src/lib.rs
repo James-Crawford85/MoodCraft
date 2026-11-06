@@ -157,10 +157,19 @@ async fn board_save(dir: String, json: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Create an empty subboard inside `parent`; returns its board-relative folder.
+#[tauri::command]
+fn subboard_create(parent: String, title: String) -> Result<String, String> {
+    board::create_subboard(&PathBuf::from(parent), &title)
+}
+
 /// Save the board into a new folder, copying its assets along.
 #[tauri::command]
 async fn board_save_as(app: AppHandle, from: String, to: String, json: String) -> Result<(), String> {
     let (from, to) = (PathBuf::from(from), PathBuf::from(to));
+    if !to.is_absolute() || !from.is_absolute() {
+        return Err("Pick a full folder path to save the board into.".into());
+    }
     let to2 = to.clone();
     tauri::async_runtime::spawn_blocking(move || {
         board::copy_assets(&from, &to)?;
@@ -242,6 +251,7 @@ pub fn run() {
             board_open,
             board_save,
             board_save_as,
+            subboard_create,
             import_image,
             import_image_bytes,
         ])

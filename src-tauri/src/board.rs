@@ -1,10 +1,12 @@
-//! Board persistence. A board is a folder: `board.json` + `assets/*.png`.
-//! Asset paths inside `board.json` are always board-relative (`assets/x.png`).
+//! Board persistence. A board is a folder: `board.json` + `assets/*.png`,
+//! plus `boards/<name>/` for subboards (each a board folder of its own).
+//! Paths inside `board.json` are always board-relative (`assets/x.png`, `boards/x`).
 
 use std::path::{Component, Path, PathBuf};
 
 pub const BOARD_FILE: &str = "board.json";
 pub const ASSETS_DIR: &str = "assets";
+pub const SUBBOARDS_DIR: &str = "boards";
 
 /// Resolve a board-relative asset path, rejecting anything that escapes the board.
 pub fn resolve_asset(board_dir: &Path, rel: &str) -> Result<PathBuf, String> {
@@ -52,12 +54,60 @@ pub fn load(board_dir: &Path) -> Result<String, String> {
     std::fs::read_to_string(&p).map_err(|e| format!("No board at {}: {e}", p.display()))
 }
 
-/// Copy all assets from one board folder into another (Save As).
+/// Create an empty subboard folder `boards/<slug>-<id>/` inside `parent`;
+/// returns its board-relative path.
+pub fn create_subboard(parent: &Path, title: &str) -> Result<String, String> {
+    let slug: String = title
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let slug = if slug.is_empty() { "board".to_string() } else { slug.chars().take(40).collect() };
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let rel = format!("{SUBBOARDS_DIR}/{slug}-{}", &id[..6]);
+    let dir = parent.join(&rel);
+    std::fs::create_dir_all(dir.join(ASSETS_DIR)).map_err(|e| format!("Create {}: {e}", dir.display()))?;
+    let json = serde_json::json!({ "app": "BoardCreate", "version": 1, "title": title, "camera": { "x": 0, "y": 0, "zoom": 1 }, "cards": [] });
+    save(&dir, &serde_json::to_string_pretty(&json).unwrap())?;
+    Ok(rel)
+}
+
+/// Copy a folder tree, keeping files that already exist at the target.
+fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let target = dst.join(entry.file_name());
+        let t = entry.file_type().map_err(|e| e.to_string())?;
+        if t.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if t.is_file() && !target.exists() {
+            std::fs::copy(entry.path(), &target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy all assets (and subboards) from one board folder into another (Save As).
 pub fn copy_assets(from: &Path, to: &Path) -> Result<(), String> {
     let src = from.join(ASSETS_DIR);
     let dst = to.join(ASSETS_DIR);
     std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
-    if from == to || !src.exists() {
+    if from == to {
+        return Ok(());
+    }
+    let subs = from.join(SUBBOARDS_DIR);
+    if subs.is_dir() {
+        // Refuse to copy a board into its own subtree (it would recurse forever).
+        if to.starts_with(from) {
+            return Err("Choose a folder outside the current board.".into());
+        }
+        copy_tree(&subs, &to.join(SUBBOARDS_DIR))?;
+    }
+    if !src.exists() {
         return Ok(());
     }
     for entry in std::fs::read_dir(&src).map_err(|e| e.to_string())? {
@@ -75,6 +125,29 @@ pub fn copy_assets(from: &Path, to: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subboards_are_created_and_copied() {
+        let root = std::env::temp_dir().join(format!("bc-sub-{}", uuid::Uuid::new_v4().simple()));
+        let parent = root.join("parent");
+        std::fs::create_dir_all(parent.join(ASSETS_DIR)).unwrap();
+        std::fs::write(parent.join(ASSETS_DIR).join("a.png"), b"x").unwrap();
+        let rel = create_subboard(&parent, "Ideas: Rooftop / Night!").unwrap();
+        assert!(rel.starts_with("boards/ideas-rooftop-night-"), "{rel}");
+        let child = parent.join(&rel);
+        assert!(load(&child).unwrap().contains("\"title\": \"Ideas: Rooftop / Night!\""));
+        std::fs::write(child.join(ASSETS_DIR).join("b.png"), b"y").unwrap();
+        let grand = create_subboard(&child, "").unwrap();
+        assert!(grand.starts_with("boards/board-"));
+
+        let copy = root.join("copy");
+        copy_assets(&parent, &copy).unwrap();
+        assert!(copy.join(ASSETS_DIR).join("a.png").exists());
+        assert!(copy.join(&rel).join(ASSETS_DIR).join("b.png").exists());
+        assert!(copy.join(&rel).join(&grand).join(BOARD_FILE).exists());
+        assert!(copy_assets(&parent, &parent.join("inside")).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn rejects_escaping_paths() {

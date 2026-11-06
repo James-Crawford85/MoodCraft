@@ -7,7 +7,7 @@
   import { board, bounds } from "$lib/board.svelte";
   import { api } from "$lib/api";
   import { comfyState, editImage, moreLikeThis, remixImages, remixRefs, scatterFromPrompt, SCATTER_COUNTS, generateFromPrompt, initGenEvents, refreshCheck, reroll, resumePending } from "$lib/gen.svelte";
-  import { FRAME_COLORS, NOTE_COLORS, type ImageCard } from "$lib/types";
+  import { FRAME_COLORS, NOTE_COLORS, type BoardLinkCard, type ImageCard } from "$lib/types";
   import ModelSetup from "$lib/ModelSetup.svelte";
   import Inpaint from "$lib/Inpaint.svelte";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
@@ -84,14 +84,55 @@
 
   function remember(dir: string, scratch: boolean) {
     try {
-      localStorage.setItem("bc.lastBoard", JSON.stringify({ dir, scratch }));
+      localStorage.setItem("bc.lastBoard", JSON.stringify({ dir, scratch, trail: $state.snapshot(board.trail) }));
     } catch {}
+  }
+
+  function joinPath(dir: string, rel: string) {
+    const sep = dir.includes("\\") ? "\\" : "/";
+    return dir + sep + rel.replaceAll("/", sep);
+  }
+
+  /** Enter a subboard (double-click its card). The breadcrumb leads back. */
+  async function openSubboard(card: BoardLinkCard) {
+    await saveNow();
+    const dir = joinPath(board.dir, card.path);
+    try {
+      const json = await api.boardOpen(dir);
+      const up = { dir: board.dir, name: board.name, scratch: board.isScratch };
+      const trail = [...board.trail, up];
+      board.load(dir, json, false);
+      board.title = card.label || board.title;
+      board.trail = trail;
+      resumePending();
+      remember(dir, false);
+    } catch (e) {
+      toast(`Couldn't open "${card.label}": ${e}`, "error");
+    }
+  }
+
+  /** Breadcrumb: go back up to trail[i]. */
+  async function goUp(i: number) {
+    const target = board.trail[i];
+    if (!target) return;
+    await saveNow();
+    try {
+      const json = await api.boardOpen(target.dir);
+      const trail = board.trail.slice(0, i);
+      board.load(target.dir, json, target.scratch);
+      board.trail = trail;
+      resumePending();
+      remember(target.dir, target.scratch);
+    } catch (e) {
+      toast(String(e), "error");
+    }
   }
 
   async function newBoard() {
     await saveNow();
     const dir = await api.boardNew();
     board.load(dir, null, true);
+    board.trail = [];
     await saveNow();
     remember(dir, true);
   }
@@ -106,6 +147,7 @@
     try {
       const json = await api.boardOpen(dir);
       board.load(dir, json, false);
+      board.trail = [];
       resumePending();
       remember(dir, false);
       toast(`Opened ${board.name}`);
@@ -248,12 +290,13 @@
       refreshCheck();
 
       // Reopen the last board, else start a scratch board.
-      let last: { dir: string; scratch: boolean } | null = null;
+      let last: { dir: string; scratch: boolean; trail?: { dir: string; name: string; scratch: boolean }[] } | null = null;
       try { last = JSON.parse(localStorage.getItem("bc.lastBoard") ?? "null"); } catch {}
       let opened = false;
       if (last?.dir) {
         try {
           board.load(last.dir, await api.boardOpen(last.dir), last.scratch);
+          board.trail = last.trail ?? [];
           resumePending();
           opened = true;
         } catch { /* folder moved or deleted */ }
@@ -284,14 +327,19 @@
 <svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 <div class="app">
-  <Canvas bind:this={canvas} />
+  <Canvas bind:this={canvas} onOpenBoard={openSubboard} onError={(m) => toast(m, "error")} />
 
   {#if dropping}<div class="dropzone">Drop images to add them to the board</div>{/if}
 
   <!-- Top bar -->
   <header class="topbar">
     <div class="brand"><span class="logo">◆</span> BoardCreate</div>
-    <div class="board-name" title={board.dir}>{board.name}<span class="saved">{savedLabel}</span></div>
+    <nav class="board-name" title={board.dir} aria-label="Board">
+      {#each board.trail as t, i}
+        <button class="crumb" onclick={() => goUp(i)} title="Back to {t.name}">{t.name}</button><span class="sep">›</span>
+      {/each}
+      <span class="current">{board.name}</span><span class="saved">{savedLabel}</span>
+    </nav>
     <div class="spacer"></div>
     <button class="btn ghost" onclick={newBoard} title="New board">New</button>
     <button class="btn ghost" onclick={() => openBoard()} title="Open board folder (Ctrl+O)">Open…</button>
@@ -358,6 +406,9 @@
           <button class="swatch" class:on={single.color === c} style="background:{c}" aria-label="color" onclick={() => { board.checkpoint(); if (single.type === "note") single.color = c; }}></button>
         {/each}
         <button class="btn ghost" onclick={() => canvas.editCard(single.id)}>Edit text</button>
+      {:else if single?.type === "board"}
+        <button class="btn" onclick={() => single.type === "board" && openSubboard(single)} title="Open this board (or double-click it)">Open</button>
+        <button class="btn ghost" onclick={() => canvas.editCard(single.id)}>Rename</button>
       {:else if single?.type === "frame"}
         {#each FRAME_COLORS as c}
           <button class="swatch" class:on={single.color === c} style="background:{c}" aria-label="color" onclick={() => { board.checkpoint(); if (single.type === "frame") single.color = c; }}></button>
@@ -522,11 +573,35 @@
     color: var(--accent);
   }
   .board-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     color: var(--muted);
-    max-width: 360px;
+    max-width: 520px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .board-name .current {
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .crumb {
+    font: inherit;
+    color: var(--accent);
+    background: transparent;
+    border: 0;
+    padding: 2px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .crumb:hover {
+    background: var(--surface-2);
+  }
+  .sep {
+    opacity: 0.6;
   }
   .saved {
     margin-left: 10px;

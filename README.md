@@ -31,6 +31,7 @@ amber if a required node or model is missing; hover it or open ⚙ to see which.
 | Add images | Drag files from Explorer onto the canvas, or paste with **Ctrl+V** |
 | Note | **N**, or right-click empty canvas → **Add note** (placed where you clicked). Double-click a note to edit it. |
 | Frame | **F** (wraps the selection), or right-click empty canvas → **Add frame**. Moving a frame moves the cards inside it. |
+| Subboard | Right-click empty canvas → **Add subboard** (type a name). It's a board of its own, stored in this board's folder under `boards/`; its card shows a mosaic of its first images. Double-click it (or **Open** in its toolbar) to go in; the breadcrumb in the top bar (Board › Subboard) goes back. **Save to folder…** copies subboards too. Deleting the card leaves the folder on disk. |
 | View large | Double-click an image: full-window viewer. **←/→** (or the arrows, or the wheel) step through the board's images in reading order (top to bottom, left to right); **Esc** or a click on the backdrop closes it and selects the last image shown. |
 | Pan / zoom | Space-drag, middle-drag or right-drag to pan (a right-click without dragging opens the menu) · mouse wheel zooms · trackpad scroll pans, pinch zooms |
 | Select | Click, Shift/Ctrl-click, drag a marquee on empty canvas, Ctrl+A |
@@ -54,6 +55,7 @@ A board is a folder:
 ```
 MyBoard/
   board.json      # cards, positions, prompts, seeds, camera
+  boards/<name>/   # subboards, each a board folder of its own
   assets/*.png    # generated, dropped and pasted images
 ```
 

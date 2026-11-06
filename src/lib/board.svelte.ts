@@ -1,4 +1,4 @@
-import type { BoardFile, Camera, Card, FrameCard, GenParams, ImageCard, JobState, NoteCard, Settings } from "./types";
+import type { BoardFile, BoardLinkCard, Camera, Card, FrameCard, GenParams, ImageCard, JobState, NoteCard, Settings } from "./types";
 import { NOTE_COLORS, FRAME_COLORS } from "./types";
 
 export const uid = () => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
@@ -47,11 +47,16 @@ class Board {
   dirty = $state(false);
   lastSaved = $state<number | null>(null);
   saveError = $state<string | null>(null);
+  /** Display name stored in board.json (set for subboards). */
+  title = $state<string | null>(null);
+  /** Boards above this one when inside a subboard, root first (for the breadcrumb). */
+  trail = $state<{ dir: string; name: string; scratch: boolean }[]>([]);
 
   #undo: string[] = [];
   #redo: string[] = [];
 
   get name() {
+    if (this.title) return this.title;
     if (this.isScratch) return "Untitled board";
     return this.dir.split(/[\\/]/).filter(Boolean).pop() ?? "Board";
   }
@@ -189,6 +194,14 @@ class Board {
     return card;
   }
 
+  addSubboardCard(path: string, label: string, at: { x: number; y: number }): BoardLinkCard {
+    const card: BoardLinkCard = { id: uid(), type: "board", x: at.x, y: at.y, w: 280, h: 230, z: this.nextZ(), label, path };
+    this.checkpoint();
+    this.cards.push(card);
+    this.selected = new Set([card.id]);
+    return card;
+  }
+
   addImage(asset: string, natW: number, natH: number, at?: { x: number; y: number }): ImageCard {
     const w = Math.min(360, natW);
     const h = Math.round((w * natH) / natW);
@@ -248,7 +261,7 @@ class Board {
 
   // --- persistence -----------------------------------------------------------
   serialize(): string {
-    const file: BoardFile = { app: "BoardCreate", version: 1, camera: $state.snapshot(this.camera), cards: $state.snapshot(this.cards) as Card[] };
+    const file: BoardFile = { app: "BoardCreate", version: 1, ...(this.title ? { title: this.title } : {}), camera: $state.snapshot(this.camera), cards: $state.snapshot(this.cards) as Card[] };
     return JSON.stringify(file, null, 1);
   }
 
@@ -270,7 +283,9 @@ class Board {
           : c,
       );
       this.camera = f.camera ?? { x: 0, y: 0, zoom: 1 };
+      this.title = f.title ?? null;
     } else {
+      this.title = null;
       this.cards = [];
       this.camera = { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 };
     }

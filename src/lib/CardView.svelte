@@ -3,6 +3,7 @@
   import { board } from "./board.svelte";
   import { assetUrl } from "./api";
   import { retry, cancel, stageLabel } from "./gen.svelte";
+  import SubboardTile from "./SubboardTile.svelte";
 
   let { card, selected, editing, onStopEdit, refIndex = 0 }: {
     card: Card; selected: boolean; editing: boolean; onStopEdit: () => void;
@@ -19,7 +20,7 @@
   }
   function keyStop(e: KeyboardEvent) {
     e.stopPropagation();
-    if (e.key === "Escape" || (e.key === "Enter" && (card.type === "frame" || e.ctrlKey))) {
+    if (e.key === "Escape" || (e.key === "Enter" && (card.type === "frame" || card.type === "board" || e.ctrlKey))) {
       (e.target as HTMLElement).blur();
     }
   }
@@ -86,6 +87,19 @@
         <span data-frame-label>{card.label || "Frame"}</span>
       {/if}
     </div>
+  {:else if card.type === "board"}
+    <SubboardTile {card} />
+    {#if editing}
+      <input
+        class="board-rename"
+        bind:value={card.label}
+        use:autofocus
+        onblur={onStopEdit}
+        onkeydown={keyStop}
+        onpointerdown={(e) => e.stopPropagation()}
+        oninput={() => board.touch()}
+      />
+    {/if}
   {/if}
   {#if selected}
     <div class="handle" data-resize></div>
@@ -172,6 +186,21 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 2px 6px;
+    outline: none;
+  }
+  .board-rename {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 6px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 3px 6px;
     outline: none;
   }
   .refnum {

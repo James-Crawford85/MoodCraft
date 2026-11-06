@@ -3,6 +3,10 @@
   import CardView from "./CardView.svelte";
   import Lightbox from "./Lightbox.svelte";
   import { remixRefs } from "./gen.svelte";
+  import { api } from "./api";
+  import type { BoardLinkCard } from "./types";
+
+  let { onOpenBoard, onError }: { onOpenBoard: (card: BoardLinkCard) => void; onError: (message: string) => void } = $props();
   import type { Card } from "./types";
 
   let el: HTMLDivElement;
@@ -253,6 +257,7 @@
     const card = board.byId(cardEl.dataset.card!);
     if (!card) return;
     if (card.type === "image" && card.status === "ready" && card.asset) { viewing = card.id; return; }
+    if (card.type === "board") { onOpenBoard(card); return; }
     if (card.type === "note") { board.checkpoint(); editingId = card.id; }
     if (card.type === "frame" && t.closest("[data-frame-label]")) { board.checkpoint(); editingId = card.id; }
   }
@@ -267,15 +272,24 @@
     const w = board.screenToWorld(p.x, p.y);
     const r = el.getBoundingClientRect();
     // Keep the menu on screen.
-    menu = { sx: Math.min(p.x, r.width - 170), sy: Math.min(p.y, r.height - 90), wx: w.x, wy: w.y };
+    menu = { sx: Math.min(p.x, r.width - 170), sy: Math.min(p.y, r.height - 125), wx: w.x, wy: w.y };
   }
 
-  function menuAdd(kind: "note" | "frame") {
+  async function menuAdd(kind: "note" | "frame" | "subboard") {
     if (!menu) return;
     const { wx, wy } = menu;
     menu = null;
     if (kind === "note") editingId = board.addNote(wx, wy).id;
-    else board.addFrame({ x: wx, y: wy });
+    else if (kind === "frame") board.addFrame({ x: wx, y: wy });
+    else {
+      const label = "New board";
+      try {
+        const path = await api.subboardCreate(board.dir, label);
+        editingId = board.addSubboardCard(path, label, { x: wx, y: wy }).id;
+      } catch (e) {
+        onError(`Couldn't create the subboard: ${e}`);
+      }
+    }
   }
 
   function closeViewer(lastId: string) {
@@ -337,6 +351,7 @@
     <div class="ctxmenu" data-action role="menu" style="left: {menu.sx}px; top: {menu.sy}px;">
       <button role="menuitem" onclick={() => menuAdd("note")}>Add note <kbd>N</kbd></button>
       <button role="menuitem" onclick={() => menuAdd("frame")}>Add frame <kbd>F</kbd></button>
+      <button role="menuitem" onclick={() => menuAdd("subboard")}>Add subboard</button>
     </div>
   {/if}
   {#if board.cards.length === 0}

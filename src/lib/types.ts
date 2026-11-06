@@ -1,4 +1,4 @@
-export type CardType = "image" | "note" | "frame";
+export type CardType = "image" | "note" | "frame" | "board";
 
 export interface BaseCard {
   id: string;
@@ -58,7 +58,15 @@ export interface FrameCard extends BaseCard {
   color: string;
 }
 
-export type Card = ImageCard | NoteCard | FrameCard;
+/** Link to a subboard: a board folder inside this one (`boards/<name>`). */
+export interface BoardLinkCard extends BaseCard {
+  type: "board";
+  label: string;
+  /** Board-relative folder of the child board. */
+  path: string;
+}
+
+export type Card = ImageCard | NoteCard | FrameCard | BoardLinkCard;
 
 export interface Camera {
   x: number; // screen-space offset of world origin
@@ -69,6 +77,8 @@ export interface Camera {
 export interface BoardFile {
   app: "BoardCreate";
   version: 1;
+  /** Display name (subboards get their card's label). */
+  title?: string;
   camera: Camera;
   cards: Card[];
 }
