@@ -193,6 +193,53 @@ async fn import_url(board_dir: String, url: String) -> Result<ImportedAsset, Str
         .map(|(asset, width, height)| ImportedAsset { asset, width, height })
 }
 
+/// Write a self-contained HTML deck next to the board folder and open it.
+/// `html` refers to images as `__ASSET_<n>__`, replaced by `assets[n]`
+/// (board-relative) embedded as data URIs. Returns the file path.
+#[tauri::command]
+async fn export_deck(app: AppHandle, board_dir: String, name: String, html: String, assets: Vec<String>) -> Result<String, String> {
+    let dir = PathBuf::from(&board_dir);
+    if !dir.is_absolute() {
+        return Err("Board folder unknown".into());
+    }
+    let out_dir = dir.parent().map(PathBuf::from).unwrap_or_else(|| dir.clone());
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || " -_().".contains(c) { c } else { '_' })
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(80)
+        .collect();
+    let path = out_dir.join(format!("{} - deck.html", if safe.is_empty() { "Board" } else { &safe }));
+    let path2 = path.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let mut html = html;
+        // Replace from the highest index down so __ASSET_1__ never matches inside __ASSET_10__.
+        for (i, rel) in assets.iter().enumerate().rev() {
+            let p = board::resolve_asset(&dir, rel)?;
+            let bytes = std::fs::read(&p).map_err(|e| format!("Read {}: {e}", p.display()))?;
+            let mime = match board::sniff_image_ext(&bytes) {
+                Some("jpg") => "image/jpeg",
+                Some("webp") => "image/webp",
+                Some("gif") => "image/gif",
+                Some("bmp") => "image/bmp",
+                _ => "image/png",
+            };
+            html = html.replace(&format!("__ASSET_{i}__"), &format!("data:{mime};base64,{}", comfy::b64(&bytes)));
+        }
+        std::fs::write(&path2, html).map_err(|e| format!("Write {}: {e}", path2.display()))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let shown = path.to_string_lossy().into_owned();
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_path(&shown, None::<&str>).map_err(|e| format!("Saved {shown}, but couldn't open it: {e}"))?;
+    }
+    Ok(shown)
+}
+
 /// Create an empty subboard inside `parent`; returns its board-relative folder.
 #[tauri::command]
 fn subboard_create(parent: String, title: String) -> Result<String, String> {
@@ -291,6 +338,7 @@ pub fn run() {
             import_image,
             import_image_bytes,
             import_url,
+            export_deck,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

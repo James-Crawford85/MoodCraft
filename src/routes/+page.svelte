@@ -11,6 +11,7 @@
   import ModelSetup from "$lib/ModelSetup.svelte";
   import Inpaint from "$lib/Inpaint.svelte";
   import CameraCapture from "$lib/CameraCapture.svelte";
+  import { buildDeck } from "$lib/deck";
   import { activeFamily, canEdit, canVary, loadModels } from "$lib/models.svelte";
 
   let canvas: Canvas;
@@ -232,6 +233,21 @@
     }
   }
 
+  let presenting = $state(false);
+  /** Export the board as an HTML slide deck next to its folder, and open it. */
+  async function present() {
+    presenting = true;
+    try {
+      await saveNow();
+      const { html, assets } = buildDeck();
+      const path = await api.exportDeck(board.dir, board.name, html, assets);
+      toast(`Deck saved: ${path}`);
+    } catch (e) {
+      toast(String(e), "error");
+    }
+    presenting = false;
+  }
+
   async function addCameraShot(png: Uint8Array) {
     const r = await api.importImageBytes(board.dir, png, "png");
     board.checkpoint();
@@ -397,6 +413,7 @@
     <button class="btn ghost" onclick={newBoard} title="New board">New</button>
     <button class="btn ghost" onclick={() => openBoard()} title="Open board folder (Ctrl+O)">Open…</button>
     <button class="btn ghost" onclick={saveAs} title="Save board to a folder (Ctrl+Shift+S)">{board.isScratch ? "Save to folder…" : "Save as…"}</button>
+    <button class="btn ghost" onclick={present} disabled={presenting || !board.cards.length} title="Export a slide deck (HTML, printable to PDF): one slide per frame, plus loose items. Saved next to the board folder and opened in your browser.">{presenting ? "Exporting…" : "Present"}</button>
     <button class="btn ghost" onclick={() => revealItemInDir(board.dir + (board.dir.includes("\\") ? "\\" : "/") + "board.json").catch(() => {})} title="Show board folder">Folder</button>
     <div class="sep"></div>
     <button

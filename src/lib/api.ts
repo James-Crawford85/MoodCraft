@@ -42,6 +42,8 @@ export const api = {
   boardSave: (dir: string, json: string) => invoke<void>("board_save", { dir, json }),
   boardSaveAs: (from: string, to: string, json: string) => invoke<void>("board_save_as", { from, to, json }),
   importUrl: (boardDir: string, url: string) => invoke<Imported>("import_url", { boardDir, url }),
+  exportDeck: (boardDir: string, name: string, html: string, assets: string[]) =>
+    invoke<string>("export_deck", { boardDir, name, html, assets }),
   subboardCreate: (parent: string, title: string) => invoke<string>("subboard_create", { parent, title }),
   importImage: (boardDir: string, path: string) => invoke<Imported>("import_image", { boardDir, path }),
   importImageBytes: (boardDir: string, bytes: Uint8Array, ext: string) =>
