@@ -31,6 +31,7 @@
     }
   },
   "bundle": {
+    "publisher": "James-Crawford85",
     "active": true,
     "targets": "all",
     "icon": [
