@@ -453,9 +453,20 @@ async fn run_job_inner(
     }
 
     progress(app, &req.card_id, "downloading", None, None, None);
-    let hist = comfy.get_json(&format!("/history/{prompt_id}")).await.map_err(e)?;
-    let img = first_output_image(&hist[&prompt_id])
-        .ok_or_else(|| e("ComfyUI finished but returned no image".into()))?;
+    // The WebSocket can report success a moment before ComfyUI has written the
+    // history entry, so give the outputs a few seconds to appear.
+    let mut img = None;
+    for attempt in 0..30 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let hist = comfy.get_json(&format!("/history/{prompt_id}")).await.map_err(e)?;
+        img = first_output_image(&hist[&prompt_id]);
+        if img.is_some() {
+            break;
+        }
+    }
+    let img = img.ok_or_else(|| e("ComfyUI finished but returned no image".into()))?;
     let bytes = fetch_view(comfy, &img).await.map_err(e)?;
     let (asset, w, h) = crate::board::write_asset(&board_dir, &bytes, "png").map_err(e)?;
     Ok(DonePayload { card_id: req.card_id.clone(), asset, width: w, height: h, seed: req.seed })
