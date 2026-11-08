@@ -2,6 +2,7 @@
 name = "moodcraft"
 version = "0.1.0"
 description = "Local infinite inspiration board backed by ComfyUI"
+license = "MIT"
 authors = ["sunsh"]
 edition = "2024"
 

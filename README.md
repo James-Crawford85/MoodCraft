@@ -446,8 +446,7 @@ place as a backup. Boards saved by BoardCreate open as they are.
 
 ## License
 
-<!-- TODO: pick a license (e.g. MIT or Apache-2.0) and add a LICENSE file. -->
-No license has been chosen yet, so for now all rights are reserved.
+MoodCraft is released under the [MIT License](LICENSE).
 
 MoodCraft doesn't include any model weights. The models you download have
 their own licenses (see [Recommended models](#recommended-models)).
