@@ -75,7 +75,8 @@ export interface Camera {
 }
 
 export interface BoardFile {
-  app: "BoardCreate";
+  /** "BoardCreate" in boards saved before the rename. */
+  app: "MoodCraft" | "BoardCreate";
   version: 1;
   /** Display name (subboards get their card's label). */
   title?: string;

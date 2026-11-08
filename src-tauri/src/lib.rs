@@ -167,7 +167,7 @@ async fn import_url(board_dir: String, url: String) -> Result<ImportedAsset, Str
     }
     const MAX: usize = 40 * 1024 * 1024;
     let client = reqwest::Client::builder()
-        .user_agent("BoardCreate/0.1 (image import)")
+        .user_agent("MoodCraft/0.1 (image import)")
         .timeout(std::time::Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())?;
@@ -306,8 +306,39 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+#[cfg(windows)]
+const OLD_IDENTIFIER: &str = "com.sunsh.boardcreate";
+#[cfg(windows)]
+const IDENTIFIER: &str = "com.sunsh.moodcraft";
+
+/// The app was called BoardCreate. On first launch as MoodCraft, copy (never
+/// move) the old app data across: models.json, workflow overrides, scratch
+/// boards, plus the WebView's localStorage (settings, last-opened board).
+/// Runs before the webview starts so localStorage is in place when it opens.
+fn migrate_from_boardcreate() {
+    #[cfg(windows)]
+    for (var, sub) in [("APPDATA", None), ("LOCALAPPDATA", Some(["EBWebView", "Default", "Local Storage"]))] {
+        let Some(base) = std::env::var_os(var).map(PathBuf::from) else { continue };
+        let (old, new) = (base.join(OLD_IDENTIFIER), base.join(IDENTIFIER));
+        if new.exists() || !old.is_dir() {
+            continue;
+        }
+        let (from, to) = match sub {
+            Some(parts) => (parts.iter().fold(old, |p, s| p.join(s)), parts.iter().fold(new.clone(), |p, s| p.join(s))),
+            None => (old, new.clone()),
+        };
+        if !from.is_dir() {
+            continue;
+        }
+        if let Err(e) = board::copy_tree(&from, &to) {
+            eprintln!("MoodCraft: couldn't copy {} to {}: {e}", from.display(), to.display());
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    migrate_from_boardcreate();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

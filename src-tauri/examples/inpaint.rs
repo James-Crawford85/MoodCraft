@@ -4,13 +4,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use boardcreate_lib::comfy::{self, Comfy, GenRequest, Sink};
+use moodcraft_lib::comfy::{self, Comfy, GenRequest, Sink};
 use serde_json::Value;
 
 #[tokio::main]
 async fn main() {
     let a: Vec<String> = std::env::args().collect();
-    let c = Arc::new(Comfy::new(boardcreate_lib::models::ModelConfig::default(), a.get(6).map(PathBuf::from)));
+    let c = Arc::new(Comfy::new(moodcraft_lib::models::ModelConfig::default(), a.get(6).map(PathBuf::from)));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
     let sink = Sink(Arc::new(move |e, p| {
         let _ = tx.send((e.to_string(), p));

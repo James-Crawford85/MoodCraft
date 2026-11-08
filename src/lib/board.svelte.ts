@@ -261,7 +261,7 @@ class Board {
 
   // --- persistence -----------------------------------------------------------
   serialize(): string {
-    const file: BoardFile = { app: "BoardCreate", version: 1, ...(this.title ? { title: this.title } : {}), camera: $state.snapshot(this.camera), cards: $state.snapshot(this.cards) as Card[] };
+    const file: BoardFile = { app: "MoodCraft", version: 1, ...(this.title ? { title: this.title } : {}), camera: $state.snapshot(this.camera), cards: $state.snapshot(this.cards) as Card[] };
     return JSON.stringify(file, null, 1);
   }
 
@@ -274,7 +274,7 @@ class Board {
     this.#redo = [];
     if (json) {
       const f = JSON.parse(json) as BoardFile;
-      if (f.app !== "BoardCreate") throw new Error("Not a BoardCreate board.json");
+      if (f.app !== "MoodCraft" && f.app !== "BoardCreate") throw new Error("Not a MoodCraft board.json");
       // Pending cards with a ComfyUI prompt id are re-attached by gen.resumePending();
       // ones that never reached the queue can only be retried.
       this.cards = (f.cards ?? []).map((c) =>

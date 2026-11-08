@@ -1,4 +1,4 @@
-# BoardCreate
+# MoodCraft
 
 A local infinite inspiration board (in the spirit of Google Mixboard) for
 concept layouts and project planning. Images are generated on the fly through
@@ -61,10 +61,16 @@ MyBoard/
 ```
 
 Every change autosaves. A new board starts as a scratch board under
-`%APPDATA%\com.sunsh.boardcreate\boards\`. **Save to folder…** copies it
+`%APPDATA%\com.sunsh.moodcraft\boards\`. **Save to folder…** copies it
 somewhere permanent, and **Open…** opens any board folder. The last board
 reopens on launch. Cards that were still generating re-attach to their ComfyUI
 job after a restart or reload.
+
+MoodCraft used to be called BoardCreate. On its first launch it copies
+`%APPDATA%\com.sunsh.boardcreate\` (models, workflow overrides, scratch boards)
+and the old settings and last-opened board into the new folders. The old
+folders are left in place as a backup, and boards saved by BoardCreate open
+as they are.
 
 ## ComfyUI workflows
 
@@ -80,7 +86,7 @@ live from ComfyUI (`/models/diffusion_models`, `/models/text_encoders`,
 `/object_info`). Changing the family preselects installed files that match it
 by name; you can override any of them. **Test** renders a 4-step 256² image with
 the selection before you save, so a mismatched encoder shows up in settings
-rather than on a card. **Save** writes `%APPDATA%\com.sunsh.boardcreate\models.json`
+rather than on a card. **Save** writes `%APPDATA%\com.sunsh.moodcraft\models.json`
 (not `board.json`). It frees and loads nothing; the next image loads the new
 models. Switching family also resets size, steps and CFG to that family's defaults.
 
@@ -110,7 +116,7 @@ type, file-name hints, default steps/CFG/sampler/scheduler, and whether it
 supports edit and variations.
 
 To change a graph without rebuilding, put `<kind>.json` (same placeholders) in
-`%APPDATA%\com.sunsh.boardcreate\workflows\<family>\`. The ⚙ panel's
+`%APPDATA%\com.sunsh.moodcraft\workflows\<family>\`. The ⚙ panel's
 **Re-check** compares the active templates' nodes and model files with
 ComfyUI's `/object_info`.
 

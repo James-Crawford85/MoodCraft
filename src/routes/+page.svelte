@@ -361,6 +361,9 @@
       // Reopen the last board, else start a scratch board.
       let last: { dir: string; scratch: boolean; trail?: { dir: string; name: string; scratch: boolean }[] } | null = null;
       try { last = JSON.parse(localStorage.getItem("bc.lastBoard") ?? "null"); } catch {}
+      // Renamed from BoardCreate: scratch boards were copied to the new app-data folder.
+      const remap = (d: string) => d.replace(/([\\/])com\.sunsh\.boardcreate([\\/])/i, "$1com.sunsh.moodcraft$2");
+      if (last?.dir) last = { ...last, dir: remap(last.dir), trail: last.trail?.map((t) => ({ ...t, dir: remap(t.dir) })) };
       let opened = false;
       if (last?.dir) {
         try {
@@ -402,7 +405,7 @@
 
   <!-- Top bar -->
   <header class="topbar">
-    <div class="brand"><span class="logo">◆</span> BoardCreate</div>
+    <div class="brand"><span class="logo">◆</span> MoodCraft</div>
     <nav class="board-name" title={board.dir} aria-label="Board">
       {#each board.trail as t, i}
         <button class="crumb" onclick={() => goUp(i)} title="Back to {t.name}">{t.name}</button><span class="sep">›</span>

@@ -5,13 +5,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use boardcreate_lib::comfy::{self, Comfy, GenRequest, Sink};
-use boardcreate_lib::models::ModelConfig;
+use moodcraft_lib::comfy::{self, Comfy, GenRequest, Sink};
+use moodcraft_lib::models::ModelConfig;
 use serde_json::Value;
 
 #[tokio::main]
 async fn main() {
-    let dir = std::env::args().nth(1).unwrap_or_else(|| std::env::temp_dir().join("boardcreate-models").to_string_lossy().into_owned());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| std::env::temp_dir().join("moodcraft-models").to_string_lossy().into_owned());
     std::fs::create_dir_all(&dir).unwrap();
     let c = Arc::new(Comfy::new(ModelConfig::default(), None));
 

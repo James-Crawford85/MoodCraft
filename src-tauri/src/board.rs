@@ -84,13 +84,13 @@ pub fn create_subboard(parent: &Path, title: &str) -> Result<String, String> {
     let rel = format!("{SUBBOARDS_DIR}/{slug}-{}", &id[..6]);
     let dir = parent.join(&rel);
     std::fs::create_dir_all(dir.join(ASSETS_DIR)).map_err(|e| format!("Create {}: {e}", dir.display()))?;
-    let json = serde_json::json!({ "app": "BoardCreate", "version": 1, "title": title, "camera": { "x": 0, "y": 0, "zoom": 1 }, "cards": [] });
+    let json = serde_json::json!({ "app": "MoodCraft", "version": 1, "title": title, "camera": { "x": 0, "y": 0, "zoom": 1 }, "cards": [] });
     save(&dir, &serde_json::to_string_pretty(&json).unwrap())?;
     Ok(rel)
 }
 
 /// Copy a folder tree, keeping files that already exist at the target.
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
     for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;

@@ -3,14 +3,14 @@
 //! Prints the result asset for each prompt (same seed for all).
 use std::sync::Arc;
 
-use boardcreate_lib::comfy::{self, Comfy, GenRequest, Sink};
+use moodcraft_lib::comfy::{self, Comfy, GenRequest, Sink};
 use serde_json::Value;
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (dir, asset, cfg) = (args[1].clone(), args[2].clone(), args[3].parse::<f64>().unwrap());
-    let c = Arc::new(Comfy::new(boardcreate_lib::models::ModelConfig::default(), None));
+    let c = Arc::new(Comfy::new(moodcraft_lib::models::ModelConfig::default(), None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
     let sink = Sink(Arc::new(move |e, p| {
         let _ = tx.send((e.to_string(), p));

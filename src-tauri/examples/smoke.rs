@@ -5,18 +5,18 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use boardcreate_lib::comfy::{self, Comfy, GenRequest, Sink};
+use moodcraft_lib::comfy::{self, Comfy, GenRequest, Sink};
 use serde_json::Value;
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let dir = args.get(1).cloned().unwrap_or_else(|| std::env::temp_dir().join("boardcreate-smoke").to_string_lossy().into_owned());
+    let dir = args.get(1).cloned().unwrap_or_else(|| std::env::temp_dir().join("moodcraft-smoke").to_string_lossy().into_owned());
     let edit_cfg: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1.0);
     let edit_prompt = args.get(3).cloned().unwrap_or_else(|| "Make it night time, lit by warm glowing lanterns".into());
     std::fs::create_dir_all(&dir).unwrap();
 
-    let c = Arc::new(Comfy::new(boardcreate_lib::models::ModelConfig::default(), None));
+    let c = Arc::new(Comfy::new(moodcraft_lib::models::ModelConfig::default(), None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
     let sink = Sink(Arc::new(move |e, p| {
         let _ = tx.send((e.to_string(), p));

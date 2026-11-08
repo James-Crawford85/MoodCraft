@@ -1,5 +1,5 @@
 {
-  "name": "boardcreate",
+  "name": "moodcraft",
   "version": "0.1.0",
   "description": "Local infinite inspiration board with ComfyUI generation",
   "type": "module",
